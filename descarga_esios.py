@@ -7,10 +7,10 @@ ESIOS_TOKEN = os.environ.get("ESIOS_TOKEN") or "ddcbd54fa41b494243f3a6094062af3f
 HEADERS = {
     "Accept": "application/json; application/vnd.esios-api-v1+json",
     "Content-Type": "application/json",
-    "x-api-key": ESIOS_TOKEN   # 👈 aquí el cambio
+    "x-api-key": ESIOS_TOKEN   
 }
 
-INDICATOR_ID = 1293  # Demanda real
+INDICATOR_ID = 1293 
 
 def fetch_demanda(start_dt_iso: str, end_dt_iso: str):
     url = f"https://api.esios.ree.es/indicators/{INDICATOR_ID}"
@@ -31,3 +31,4 @@ if __name__ == "__main__":
     df = fetch_demanda(inicio + "T00:00:00+02:00", fin + "T00:00:00+02:00")
     print(df.head())
     df.to_csv(f"demanda_real_{inicio}_a_{fin}.csv", index=False)
+
