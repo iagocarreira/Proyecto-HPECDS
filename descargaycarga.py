@@ -57,7 +57,16 @@ def create_table():
 
 # Función para cargar los datos en la base de datos
 def load_to_sql(df, table_name):
-    conn = pyodbc.connect(f'DRIVER={driver};SERVER={server};PORT=1433;DATABASE={database};UID={username};PWD={password}')
+    conn = pyodbc.connect(
+    "DRIVER={ODBC Driver 18 for SQL Server};"
+    "SERVER=tcp:udcserver2025.database.windows.net,1433;"
+    "DATABASE=grupo_1;"
+    "UID=ugrupo1;"
+    "PWD=HK9WXIJaBp2Q97haePdY;"
+    "Encrypt=yes;"
+    "TrustServerCertificate=no;"
+    "Connection Timeout=30;")
+
     cursor = conn.cursor()
 
     for index, row in df.iterrows():
