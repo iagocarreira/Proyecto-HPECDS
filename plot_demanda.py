@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from sqlalchemy import create_engine, text
 
 
+
 SERVER   = "udcserver2025.database.windows.net"
 DATABASE = "grupo_1"
 USER     = "ugrupo1"
