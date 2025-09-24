@@ -23,17 +23,17 @@ driver = '{ODBC Driver 18 for SQL Server}' #Hay que instalar el driver ODBC 18
 def convert_to_datetime(date_str):
     if isinstance(date_str, str):
         if 'Z' in date_str:
-            # Elimina el 'Z' (indicador de UTC) y convierte la cadena a un objeto datetime
-            date_str = date_str.replace('Z', '')  
-            return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%f')
+            date_str = date_str.replace('Z', '')
         elif '+' in date_str:
-            # Elimina la parte de la zona horaria, manteniendo la parte de la fecha
             date_str = date_str.split("+")[0]
+        try:
+            # Primero intentamos con milisegundos
             return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%f')
-        else:
-            # Si no tiene zona horaria, intentamos convertirla directamente
-            return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S.%f')
+        except ValueError:
+            # Si falla, intentamos sin milisegundos
+            return datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
     return date_str
+
 
 # Función para crear la tabla si no existe
 def create_table():
@@ -46,7 +46,11 @@ def create_table():
     BEGIN
         CREATE TABLE dbo.demanda (
             fecha DATETIME NOT NULL,
-            demanda FLOAT NOT NULL
+            fecha_utc DATETIME NOT NULL,
+            tz_time DATETIME NOT NULL,
+            valor FLOAT NOT NULL,
+            geo_id INT NOT NULL,
+            geo_name NVARCHAR(100) NOT NULL
         );
     END
     """)
@@ -57,28 +61,21 @@ def create_table():
 
 # Función para cargar los datos en la base de datos
 def load_to_sql(df, table_name):
-    conn = pyodbc.connect(
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=tcp:udcserver2025.database.windows.net,1433;"
-    "DATABASE=grupo_1;"
-    "UID=ugrupo1;"
-    "PWD=HK9WXIJaBp2Q97haePdY;"
-    "Encrypt=yes;"
-    "TrustServerCertificate=no;"
-    "Connection Timeout=30;")
-
+    conn = pyodbc.connect(f'DRIVER={driver};SERVER={server};PORT=1433;DATABASE={database};UID={username};PWD={password}')
     cursor = conn.cursor()
 
     for index, row in df.iterrows():
-        # Asegúrate de convertir la fecha al formato adecuado antes de insertarla
         fecha = convert_to_datetime(row['datetime'])
-        demanda = row['value']
+        fecha_utc = convert_to_datetime(row['datetime_utc'])
+        tz_time = convert_to_datetime(row['tz_time'])
+        valor = row['value']
+        geo_id = row['geo_id']
+        geo_name = row['geo_name']
 
         cursor.execute(f"""
-            INSERT INTO {table_name} (fecha, demanda)
-            VALUES (?, ?)
-        """, fecha, demanda)  # Inserta la fecha y la demanda en la base de datos
-    
+            INSERT INTO {table_name} (fecha, fecha_utc, tz_time, valor, geo_id, geo_name)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, fecha, fecha_utc, tz_time, valor, geo_id, geo_name)
     conn.commit()
     cursor.close()
     conn.close()
@@ -112,3 +109,4 @@ if __name__ == "__main__":
 
     # Cargar los datos en la base de datos
     load_to_sql(df, 'dbo.demanda')  # Nombre correcto de la tabla (incluyendo esquema)
+
