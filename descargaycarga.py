@@ -64,22 +64,35 @@ def load_to_sql(df, table_name):
     conn = pyodbc.connect(f'DRIVER={driver};SERVER={server};PORT=1433;DATABASE={database};UID={username};PWD={password}')
     cursor = conn.cursor()
 
+    # Paso 1: obtener las fechas existentes
+    cursor.execute(f"SELECT fecha FROM {table_name}")
+    existing_dates = set([row[0] for row in cursor.fetchall()])
+
+    # Paso 2: filtrar el DataFrame para insertar solo las fechas nuevas
+    rows_to_insert = []
     for index, row in df.iterrows():
         fecha = convert_to_datetime(row['datetime'])
-        fecha_utc = convert_to_datetime(row['datetime_utc'])
-        tz_time = convert_to_datetime(row['tz_time'])
-        valor = row['value']
-        geo_id = row['geo_id']
-        geo_name = row['geo_name']
+        if fecha not in existing_dates:
+            fecha_utc = convert_to_datetime(row['datetime_utc'])
+            tz_time = convert_to_datetime(row['tz_time'])
+            valor = row['value']
+            geo_id = row['geo_id']
+            geo_name = row['geo_name']
+            rows_to_insert.append((fecha, fecha_utc, tz_time, valor, geo_id, geo_name))
 
-        cursor.execute(f"""
+    # Paso 3: insertar solo las filas nuevas
+    if rows_to_insert:
+        cursor.executemany(f"""
             INSERT INTO {table_name} (fecha, fecha_utc, tz_time, valor, geo_id, geo_name)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, fecha, fecha_utc, tz_time, valor, geo_id, geo_name)
-    conn.commit()
+        """, rows_to_insert)
+        conn.commit()
+        print(f"Se insertaron {len(rows_to_insert)} filas nuevas en {table_name}.")
+    else:
+        print("No hay filas nuevas para insertar.")
+
     cursor.close()
     conn.close()
-    print(f"Datos cargados en la tabla {table_name}.")
 
 # Función para obtener los datos de la API
 def fetch_demanda(start_dt_iso: str, end_dt_iso: str):
@@ -109,4 +122,3 @@ if __name__ == "__main__":
 
     # Cargar los datos en la base de datos
     load_to_sql(df, 'dbo.demanda')  # Nombre correcto de la tabla (incluyendo esquema)
-
