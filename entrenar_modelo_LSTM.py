@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sqlalchemy import create_engine, text
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
+from sklearn.metrics import root_mean_squared_error, mean_absolute_percentage_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
@@ -99,7 +99,7 @@ dummy_array_pred[:, 0] = y_pred_escalada.flatten()
 y_pred_original = scaler.inverse_transform(dummy_array_pred)[:, 0]
 
 # Calcular RMSE y MAPE
-rmse = mean_squared_error(y_test_original, y_pred_original, squared=False)
+rmse = root_mean_squared_error(y_test_original, y_pred_original, squared=False)
 mape = mean_absolute_percentage_error(y_test_original, y_pred_original) * 100
 
 print(f"\nError (RMSE) del modelo LSTM en los datos de test: {rmse:.2f} MW")
