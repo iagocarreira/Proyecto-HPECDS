@@ -95,11 +95,7 @@ dummy_array_pred = np.zeros((len(y_pred_escalada), len(features_to_scale)))
 dummy_array_pred[:, 0] = y_pred_escalada.flatten()
 y_pred_original = scaler.inverse_transform(dummy_array_pred)[:, 0]
 
-<<<<<<< HEAD
-# Calcular RMSE y MAPE
-=======
-# Métricas en MW
->>>>>>> 0469678acba2877eddc67024fd99296857071e58
+
 rmse = root_mean_squared_error(y_test_original, y_pred_original)
 mape = mean_absolute_percentage_error(y_test_original, y_pred_original) * 100
 mae  = mean_absolute_error(y_test_original, y_pred_original)  # <<< añadido
@@ -143,9 +139,8 @@ plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.tight_layout()
 plt.show()
-<<<<<<< HEAD
+
 
 model.save("modelo_lstm_multivariate.keras")
 
-=======
->>>>>>> 0469678acba2877eddc67024fd99296857071e58
+
