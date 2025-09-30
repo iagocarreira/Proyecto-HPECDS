@@ -6,14 +6,13 @@ import matplotlib.pyplot as plt
 
 
 # --- 1. CONFIGURACIÓN ---
-# Vuelve a poner tus credenciales aquí
 SERVER   = "udcserver2025.database.windows.net"
 DATABASE = "grupo_1"
 USER     = "ugrupo1"
 PASSWORD = "HK9WXIJaBp2Q97haePdY"
 
 ENGINE_URL = f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no"
-engine = create_engine(ENGINE_URL)
+engine = create_engine(ENGINE_URL, pool_pre_ping=True)
 
 # --- 2. CARGAR Y PREPARAR DATOS ---
 query = "SELECT fecha, valor FROM dbo.demanda ORDER BY fecha"
@@ -107,3 +106,6 @@ plt.ylabel("Potencia (MW)", fontsize=14)
 plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.show()
+
+# Al final de tu script LightGBM:
+lgb_reg.booster_.save_model("modelo_lgbm_multivariate.txt")

@@ -81,7 +81,7 @@ dummy_array_pred[:, 0] = y_pred_escalada.flatten()
 y_pred_original = scaler.inverse_transform(dummy_array_pred)[:, 0]
 
 # Cálculo de métricas
-rmse = root_mean_squared_error(y_test_original, y_pred_original, squared=False)
+rmse = root_mean_squared_error(y_test_original, y_pred_original)
 mape = mean_absolute_percentage_error(y_test_original, y_pred_original) * 100
 indices_test = df.index[train_size + LOOK_BACK:]
 

@@ -99,7 +99,7 @@ dummy_array_pred[:, 0] = y_pred_escalada.flatten()
 y_pred_original = scaler.inverse_transform(dummy_array_pred)[:, 0]
 
 # Calcular RMSE y MAPE
-rmse = root_mean_squared_error(y_test_original, y_pred_original, squared=False)
+rmse = root_mean_squared_error(y_test_original, y_pred_original)
 mape = mean_absolute_percentage_error(y_test_original, y_pred_original) * 100
 
 print(f"\nError (RMSE) del modelo LSTM en los datos de test: {rmse:.2f} MW")
@@ -122,4 +122,6 @@ plt.ylabel("Potencia (MW)", fontsize=14)
 plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.show()
+
+model.save("modelo_lstm_multivariate.keras")
 
