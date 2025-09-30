@@ -139,3 +139,112 @@ plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.6)
 plt.tight_layout()
 plt.show()
+
+# === 9) ANOMALÍAS (híbrido σ-rodante afinado) ===
+# Requisitos: 'resultados_test' con ['real','prediccion'] e índice temporal; var 'rmse'
+
+import numpy as np, pandas as pd, math, matplotlib.pyplot as plt
+
+# --- Parámetros MÁS sensibles ---
+K = 2.2                 # antes: 3.0
+PCT_THRESHOLD = 0.006   # 0.6% del valor real (antes 1.2%)
+FLOOR_MW = 80.0         # suelo absoluto (antes 150 MW)
+EWMA_ALPHA = 0.0        # sin suavizado para no aplastar picos
+MIN_STREAK = 1          # sin requisito de consecutivos
+WIN_MIN = 180           # ventana ~3h
+MIN_FRAC = 0.5
+AUTO_CALIB = True       # auto-ajuste de K
+TARGET_RATE = 0.015     # ~1.5% de puntos anómalos
+CAP_SIGMA_RATIO = 1.3   # tope: si σ clásica > 1.3×σ_robusta, usa la robusta
+
+# --- 9.1 Residuos (sin suavizado) ---
+df = resultados_test.copy()
+df["residuos"] = df["real"] - df["prediccion"]
+df["res_smooth"] = df["residuos"] if EWMA_ALPHA == 0 else df["residuos"].ewm(alpha=EWMA_ALPHA, adjust=False).mean()
+
+# --- util: ventana en puntos desde frecuencia temporal ---
+def _infer_window_points(index, minutes=WIN_MIN, min_frac=MIN_FRAC):
+    try:
+        freq = pd.infer_freq(index)
+    except Exception:
+        freq = None
+    if not freq:
+        delta = (pd.Series(index).diff().median()
+                 if len(index) >= 2 else pd.Timedelta(minutes=5))
+        if pd.isna(delta): delta = pd.Timedelta(minutes=5)
+    else:
+        delta = pd.to_timedelta(freq)
+    step_min = max(1, int(delta.total_seconds() // 60))
+    win = max(1, int(math.ceil(minutes / step_min)))
+    min_periods = max(1, int(math.ceil(win * min_frac)))
+    return win, min_periods
+
+win, min_per = _infer_window_points(df.index)
+
+# --- 9.2 σ rodante (con respaldo robusto MAD) + CAP anti-inflado ---
+sigma_loc = df["res_smooth"].shift(1).rolling(win, min_periods=min_per).std()
+mad_loc = (df["res_smooth"].shift(1)
+           .rolling(win, min_periods=min_per)
+           .apply(lambda s: np.median(np.abs(s - np.median(s))), raw=False))
+sigma_robusta = 1.4826 * mad_loc
+
+sigma_eff = sigma_loc.copy()
+sigma_eff = np.where(
+    (pd.isna(sigma_eff)) | (sigma_eff > CAP_SIGMA_RATIO * sigma_robusta),
+    sigma_robusta,
+    sigma_eff
+)
+sigma_eff = pd.Series(sigma_eff, index=df.index).replace(0, np.nan)
+
+# --- 9.3 Umbral híbrido ---
+umbral_sigma = K * sigma_eff
+umbral_pct   = PCT_THRESHOLD * df["real"].abs()
+umbral_abs   = pd.Series(FLOOR_MW, index=df.index)
+df["umbral_MW"] = pd.concat([umbral_sigma, umbral_pct, umbral_abs], axis=1).max(axis=1)
+
+# --- 9.4 Auto-calibración opcional de K ---
+if AUTO_CALIB:
+    val = (df["res_smooth"].abs() / sigma_eff).replace([np.inf, -np.inf], np.nan).dropna()
+    if not val.empty:
+        K = float(np.nanpercentile(val, 100*(1 - TARGET_RATE)))
+        umbral_sigma = K * sigma_eff
+        df["umbral_MW"] = pd.concat([umbral_sigma, umbral_pct, umbral_abs], axis=1).max(axis=1)
+
+# --- 9.5 Etiquetado ---
+is_anom_point = (df["res_smooth"].abs() > df["umbral_MW"].fillna(np.inf))
+if MIN_STREAK > 1:
+    streak = (is_anom_point.groupby((~is_anom_point).cumsum())
+              .cumcount() + 1) * is_anom_point.astype(int)
+    is_anom = streak >= MIN_STREAK
+else:
+    is_anom = is_anom_point
+
+df["anomalia"] = is_anom.astype(int)
+
+# --- 9.6 Resumen ---
+n = len(df); n_anom = int(df["anomalia"].sum())
+print("\n=== Anomalías (híbrido σ-rodante afinado) ===")
+print(f"Ventana≈{win} pts | K={K:.2f} | PCT={PCT_THRESHOLD*100:.2f}% | FLOOR={FLOOR_MW} MW | AutoCalib={AUTO_CALIB}")
+print(f"Filas: {n} | Anómalos: {n_anom} ({100*n_anom/n:.2f}%)")
+print("pct |res| > umbral:",
+      float((df['residuos'].abs() > df['umbral_MW']).mean()*100), "%")
+
+# --- 9.7 Plot (banda + puntos) ---
+plt.figure(figsize=(16,8))
+plt.style.use('seaborn-v0_8-whitegrid')
+plt.plot(df.index, df["real"], label='Demanda Real (MW)', linewidth=1.5)
+plt.plot(df.index, df["prediccion"], label='Predicción LSTM (MW)', linewidth=2.2, alpha=0.9)
+plt.fill_between(df.index,
+                 df["prediccion"] - df["umbral_MW"],
+                 df["prediccion"] + df["umbral_MW"],
+                 alpha=0.18, label='Banda ± umbral híbrido')
+if n_anom > 0:
+    pts = df[df["anomalia"]==1]
+    plt.scatter(pts.index, pts["real"], s=70, zorder=5, label="Anomalía")
+plt.title(f"Detección de Anomalías con LSTM | híbrido σ-rodante (K≈{K:.2f}) | RMSE: {rmse:.2f} MW", fontsize=16)
+plt.xlabel("Fecha y Hora"); plt.ylabel("Potencia (MW)")
+plt.legend(fontsize=12); plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout(); plt.show()
+
+# Dejar el DF actualizado
+resultados_test = df
