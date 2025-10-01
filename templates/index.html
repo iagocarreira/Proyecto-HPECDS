@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreenEnergy Insights: Selector de Modelo</title>
+    <style>
+    body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+        background-color: #f0f4f8;
+    }
+    .container {
+        text-align: center;
+        padding: 30px;
+        background-color: white;
+        border-radius: 12px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+        color: #007bff; /* HPE Blue-ish */
+        margin-bottom: 20px;
+    }
+    .model-selector {
+        /* LA CORRECCIÓN ESTÁ AQUÍ */
+        display: flex;
+        gap: 40px;
+        margin-top: 30px;
+        justify-content: center; /* ESTO CENTRA LOS ELEMENTOS HIJOS EN EL EJE HORIZONTAL */
+        width: 100%; /* Asegura que tome todo el ancho disponible */
+        /* FIN DE LA CORRECCIÓN */
+    }
+    .model-box {
+        display: block;
+        text-decoration: none;
+        color: white;
+        padding: 30px 40px;
+        border-radius: 8px;
+        font-size: 1.2em;
+        font-weight: bold;
+        transition: transform 0.2s, box-shadow 0.2s;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .model-box:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2);
+    }
+    #lstm-box {
+        background-color: #008000; /* Verde para LSTM */
+    }
+    #lgbm-box {
+        background-color: #ff8c00; /* Naranja para LightGBM */
+    }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Bienvenido a nuestro proyecto de GreenEnergy Insights</h1>
+        <p>Seleccione el modelo con el que desea predecir la demanda de energía:</p>
+
+        <div class="model-selector">
+            <a href="/predict_and_plot/LSTM" class="model-box" id="lstm-box">
+                Modelo LSTM
+            </a>
+            
+            <a href="/predict_and_plot/LGBM" class="model-box" id="lgbm-box">
+                Modelo LightGBM
+            </a>
+        </div>
+        
+        <p style="margin-top: 40px; color: #666;">
+            (La gráfica se abrirá en una nueva página/pestaña al hacer clic)
+        </p>
+    </div>
+</body>
+</html>

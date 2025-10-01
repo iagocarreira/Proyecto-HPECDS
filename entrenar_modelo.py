@@ -108,4 +108,4 @@ plt.grid(True, linestyle='--', alpha=0.6)
 plt.show()
 
 # Al final de tu script LightGBM:
-lgb_reg.booster_.save_model("modelo_lgbm_multivariate.txt")
+lgb_reg.booster_.save_model("modelo_demanda_lgbm.txt")

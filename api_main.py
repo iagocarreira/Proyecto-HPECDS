@@ -4,7 +4,7 @@ import io
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, render_template 
 import lightgbm as lgb
 
 # Importaciones de Deep Learning 
@@ -75,16 +75,24 @@ def load_models_at_startup():
     except Exception as e:
         print(f"ERROR: No se pudo cargar el modelo LSTM. Asegúrese de que el archivo existe. {e}")
         
-    # try:
-    #     # 2. Carga del Modelo LightGBM
-    #     MODELS['LGBM'] = lgb.Booster(model_file="modelo_lgbm_multivariate.txt")
-    #     print("INFO: Modelo LightGBM cargado.")
-    # except Exception as e:
-    #     print(f"ERROR: No se pudo cargar el modelo LightGBM. Asegúrese de que el archivo existe. {e}")
+    try:
+        # 2. Carga del Modelo LightGBM
+        MODELS['LGBM'] = lgb.Booster(model_file="modelo_demanda_lgbm.txt")
+        print("INFO: Modelo LightGBM cargado.")
+    except Exception as e:
+        print(f"ERROR: No se pudo cargar el modelo LightGBM. Asegúrese de que el archivo existe. {e}")
 
 
 
 load_models_at_startup() 
+
+# --- ENDPOINT PRINCIPAL (El que cargará la página) ---
+@app.route("/", methods=["GET"])
+def home():
+    """
+    Endpoint raíz que sirve la página de bienvenida con los enlaces de selección de modelo.
+    """
+    return render_template("index.html")
 
 
 # --- ENDPOINT PRINCIPAL ---
