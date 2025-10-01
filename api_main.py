@@ -75,12 +75,12 @@ def load_models_at_startup():
     except Exception as e:
         print(f"ERROR: No se pudo cargar el modelo LSTM. Asegúrese de que el archivo existe. {e}")
         
-    # try:
-    #     # 2. Carga del Modelo LightGBM
-    #     MODELS['LGBM'] = lgb.Booster(model_file="modelo_lgbm_multivariate.txt")
-    #     print("INFO: Modelo LightGBM cargado.")
-    # except Exception as e:
-    #     print(f"ERROR: No se pudo cargar el modelo LightGBM. Asegúrese de que el archivo existe. {e}")
+    try:
+        # 2. Carga del Modelo LightGBM
+        MODELS['LGBM'] = lgb.Booster(model_file="modelo_lgbm_multivariate.txt")
+        print("INFO: Modelo LightGBM cargado.")
+    except Exception as e:
+        print(f"ERROR: No se pudo cargar el modelo LightGBM. Asegúrese de que el archivo existe. {e}")
 
 
 
