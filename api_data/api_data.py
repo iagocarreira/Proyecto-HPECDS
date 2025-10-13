@@ -23,7 +23,7 @@ ENGINE_URL = (
 engine: Engine = create_engine(ENGINE_URL, pool_pre_ping=True, future=True)
 
 # ---------- Config ----------
-TABLE_NAME = os.getenv("TABLE_NAME", "demanda_total")
+TABLE_NAME = os.getenv("TABLE_NAME", "demanda_peninsula")
 PAGE_MAX = 1000
 
 meta = MetaData()
