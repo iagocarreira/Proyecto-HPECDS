@@ -1,0 +1,45 @@
+# api_data/dockerfile
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Paquetes base y build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg ca-certificates apt-transport-https \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clave y repo de Microsoft (Debian 12 / bookworm)
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+      | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+      > /etc/apt/sources.list.d/mssql-release.list
+
+# Instala ODBC 18 + unixODBC
+RUN apt-get update && \
+    ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Requisitos Python (los de api_data/)
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia TODO el código de la carpeta api_data (incluye web/, etc.)
+COPY . /app
+
+# Asegura que exista un "main.py" arrancable aunque el módulo se llame api_data.py
+# (si ya hay main.py no hace nada)
+RUN [ -f /app/main.py ] || ( [ -f /app/api_data.py ] && cp /app/api_data.py /app/main.py ) || true
+
+# Crea una UI mínima si no hay web/ (no rompe si ya existe)
+RUN mkdir -p /app/web && \
+    [ -f /app/web/index.html ] || printf "<!doctype html><h1>API Data OK</h1>" > /app/web/index.html
+
+EXPOSE 8000
+
+# Arranca uvicorn contra main:app (garantizado por el paso anterior)
+CMD ["bash", "-lc", "uvicorn main:app --host 0.0.0.0 --port 8000 --log-level info"]
