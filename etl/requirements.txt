@@ -1,0 +1,7 @@
+pandas
+requests
+python-dotenv
+pyodbc
+python-dateutil
+apache-airflow[sql-server]>=2.5.0,<2.6.0
+sqlalchemy>=1.4,<2.0
