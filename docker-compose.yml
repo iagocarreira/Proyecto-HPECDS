@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  api_main:
+    build:
+      context: ./api_main
+      dockerfile: dockerfile
+    image: proyecto-hpecds-api_main
+    container_name: proyecto-hpecds-api_main-1
+    # Access/Error logs a stdout para depurar fácilmente
+    command: >
+      bash -lc "gunicorn --access-logfile - --error-logfile - -w 1
+      -b 0.0.0.0:5000 api_main:app --timeout 120"
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:5000/health >/dev/null || exit 1"]
+      start_period: 60s
+      interval: 20s
+      timeout: 5s
+      retries: 8
+
+  api_data:
+    build:
+      context: ./api_data
+      dockerfile: dockerfile
+    image: proyecto-hpecds-api_data
+    container_name: proyecto-hpecds-api_data-1
+    command: bash -lc "uvicorn api_data:app --host 0.0.0.0 --port 8000 --log-level info"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      SQL_SERVER: "udcserver2025.database.windows.net"
+      SQL_DB: "grupo_1"
+      SQL_USER: "ugrupo1"
+      SQL_PASSWORD: "HK9WXIJaBp2Q97haePdY"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health >/dev/null || exit 1"]
+      start_period: 40s
+      interval: 15s
+      timeout: 5s
+      retries: 8

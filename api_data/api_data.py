@@ -23,7 +23,7 @@ ENGINE_URL = (
 engine: Engine = create_engine(ENGINE_URL, pool_pre_ping=True, future=True)
 
 # ---------- Config ----------
-TABLE_NAME = os.getenv("TABLE_NAME", "demanda_total")
+TABLE_NAME = os.getenv("TABLE_NAME", "demanda_peninsula")
 PAGE_MAX = 1000
 
 meta = MetaData()
@@ -61,23 +61,45 @@ def root():
     return RedirectResponse(url="/ui/")
 
 # ---------- Utils ----------
+
 def _parse_dt(s: Optional[str], is_hasta: bool = False) -> Optional[datetime]:
     if not s:
         return None
     s = s.strip()
-    # Solo fecha YYYY-MM-DD
+
+    # 1) Normaliza separadores y detecta formatos comunes
+    s_norm = s.replace(" ", "T")  # permite "YYYY-MM-DD HH:MM"
+    # a) Solo fecha ISO: YYYY-MM-DD
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
         d = datetime.strptime(s, "%Y-%m-%d").date()
         return datetime.combine(d, time(23, 59, 59)) if is_hasta else datetime.combine(d, time(0, 0, 0))
-    # YYYY-MM-DDTHH:MM (añadimos :00)
-    if len(s) == 16 and "T" in s:
-        s = s + ":00"
-    # YYYY-MM-DD HH:MM -> normalizamos a T
-    s = s.replace(" ", "T")
+
+    # b) Solo fecha ES: DD/MM/YYYY o DD-MM-YYYY
+    if len(s) == 10 and (s[2] in "/-") and (s[5] in "/-"):
+        sep = s[2]
+        d = datetime.strptime(s, f"%d{sep}%m{sep}%Y").date()
+        return datetime.combine(d, time(23, 59, 59)) if is_hasta else datetime.combine(d, time(0, 0, 0))
+
+    # c) Fecha+hora ES: DD/MM/YYYY HH:MM (o con -)
+    if (" " in s or "T" in s) and ("/" in s or "-" in s):
+        # intentos en orden: DD/MM/YYYY HH:MM, DD-MM-YYYY HH:MM
+        for fmt in ("%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M"):
+            try:
+                dt = datetime.strptime(s.replace("T", " "), fmt)
+                return dt
+            except ValueError:
+                pass
+
+    # d) ISO sin segundos: YYYY-MM-DDTHH:MM
+    if len(s_norm) == 16 and "T" in s_norm:
+        s_norm = s_norm + ":00"
+
+    # e) ISO completo: YYYY-MM-DDTHH:MM:SS
     try:
-        return datetime.fromisoformat(s)
+        return datetime.fromisoformat(s_norm)
     except Exception:
         raise HTTPException(status_code=400, detail=f"Fecha inválida: {s}")
+
 
 # ---------- Endpoints ----------
 @app.get("/health")
