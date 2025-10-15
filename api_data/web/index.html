@@ -5,43 +5,95 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Consulta de Demanda</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, Arial; margin: 20px; }
-    form { display: grid; grid-template-columns: repeat(6, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
-    input, button { padding: 8px; font-size: 14px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid #ddd; padding: 6px 8px; white-space: nowrap; }
-    th { background: #f4f4f4; text-align: left; position: sticky; top: 0; }
-    .toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
-    .status { font-size: 12px; color:#555; }
+    :root{
+      --gap:16px;
+      --radius:10px;
+      --bd:#bdbdbd;
+      --focus:#3b82f6;
+    }
+    *{box-sizing:border-box}
+    body{font-family:ui-sans-serif,system-ui,Arial;margin:20px}
+    h1{margin:0 0 18px}
+
+    /* GRID responsiva: evita solapes */
+    .grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:var(--gap);
+      margin-bottom:14px;
+      align-items:end;
+    }
+
+    .field,
+    .group{display:flex;flex-direction:column;gap:6px;min-width:0}
+    .label{font-weight:600}
+
+    /* cajas día + hora como “pastilla” doble */
+    .group-fields{
+      display:flex; gap:0; width:100%; min-width:0; flex-wrap:nowrap;
+    }
+    input{padding:10px 12px;font-size:14px;border:1px solid var(--bd);border-radius:var(--radius);width:100%}
+    input:focus{outline:none;border-color:var(--focus);box-shadow:0 0 0 2px rgba(59,130,246,.2)}
+
+    .box{border-radius:0; border-left-width:0}
+    .box.left{border-left-width:1px;border-radius:var(--radius) 0 0 var(--radius)}
+    .box.right{border-radius:0 var(--radius) var(--radius) 0; max-width:160px; flex:0 0 160px}
+
+    /* tabla */
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #e2e2e2;padding:6px 8px;white-space:nowrap}
+    th{background:#f6f6f6;text-align:left;position:sticky;top:0}
+    .toolbar{display:flex;gap:8px;align-items:center;margin:10px 0 14px;flex-wrap:wrap}
+    .status{font-size:12px;color:#555}
   </style>
 </head>
 <body>
   <h1>Consulta de Demanda</h1>
 
-  <form id="filtros" onsubmit="return false;">
-    <label>Desde (ISO)
-      <input type="datetime-local" id="desde" />
-    </label>
-    <label>Hasta (ISO)
-      <input type="datetime-local" id="hasta" />
-    </label>
-    <label>geo_name
-      <input type="text" id="geo_name" placeholder="ej. Península" />
-    </label>
-    <label>Limit
-      <input type="number" id="limit" value="50" min="1" max="1000" />
-    </label>
-    <label>Orden
-      <input type="text" id="order" value="fecha" />
-    </label>
-    <label style="grid-column: 1 / span 6;">Columnas (CSV)
-      <input type="text" id="fields" placeholder="ej. fecha,valor_real,geo_name_real" />
-    </label>
-  </form>
+  <div class="grid">
+    <!-- Desde -->
+    <div class="group">
+      <span class="label">Desde</span>
+      <div class="group-fields">
+        <input type="date" id="desde_d" class="box left">
+        <input type="time" id="desde_h" class="box right" placeholder="--:--">
+      </div>
+    </div>
+
+    <!-- Hasta -->
+    <div class="group">
+      <span class="label">Hasta</span>
+      <div class="group-fields">
+        <input type="date" id="hasta_d" class="box left">
+        <input type="time" id="hasta_h" class="box right" placeholder="--:--">
+      </div>
+    </div>
+
+    <div class="field">
+      <span class="label">geo_name</span>
+      <input type="text" id="geo_name" placeholder="ej. Península">
+    </div>
+
+    <div class="field">
+      <span class="label">Limit</span>
+      <input type="number" id="limit" value="50" min="1" max="1000">
+    </div>
+
+    <div class="field">
+      <span class="label">Orden</span>
+      <input type="text" id="order" value="fecha">
+    </div>
+
+    <div class="field" style="grid-column:1/-1">
+      <span class="label">Columnas (CSV)</span>
+      <input type="text" id="fields" placeholder="ej. fecha,valor_real,geo_name_real">
+    </div>
+  </div>
 
   <div class="toolbar">
     <button id="btnBuscar">Buscar</button>
     <button id="btnLimpiar">Limpiar filtros</button>
+    <button id="btnUltimoDia">Último día con datos</button>
     <span class="status" id="status"></span>
   </div>
 
@@ -51,81 +103,101 @@
   </table>
 
   <script>
-    function toISO(dtLocal) {
-      if (!dtLocal) return null;           // "YYYY-MM-DDTHH:mm"
-      return dtLocal.length === 16 ? dtLocal + ":00" : dtLocal; // añade :ss
+    function buildDateParam(d, h){
+      const date=document.getElementById(d).value;
+      const time=document.getElementById(h).value;
+      if(!date) return null;
+      return time ? `${date}T${time}` : date;
     }
 
-    function construirCabecera(keys) {
-      const tr = document.getElementById("thead-row");
-      tr.innerHTML = "";
-      for (const k of keys) {
-        const th = document.createElement("th");
-        th.textContent = k;
+    function construirCabecera(keys){
+      const tr=document.getElementById("thead-row");
+      tr.innerHTML="";
+      for(const k of keys){
+        const th=document.createElement("th");
+        th.textContent=k;
         tr.appendChild(th);
       }
     }
 
-    function pintarTabla(data) {
-      const tbody = document.querySelector("#tabla tbody");
-      tbody.innerHTML = "";
-      if (!data || data.length === 0) return;
-
-      const keys = Object.keys(data[0]);
+    function pintarTabla(data){
+      const tbody=document.querySelector("#tabla tbody");
+      tbody.innerHTML="";
+      if(!data || data.length===0) return;
+      const keys=Object.keys(data[0]);
       construirCabecera(keys);
-
-      for (const r of data) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = keys.map(k => `<td>${r[k] ?? ""}</td>`).join("");
+      for(const r of data){
+        const tr=document.createElement("tr");
+        tr.innerHTML=keys.map(k=>`<td>${r[k]??""}</td>`).join("");
         tbody.appendChild(tr);
       }
     }
 
-    async function cargar() {
-      const qs = new URLSearchParams();
-      const desde = toISO(document.getElementById("desde").value);
-      const hasta = toISO(document.getElementById("hasta").value);
-      const geoName = document.getElementById("geo_name").value;
-      const limit = document.getElementById("limit").value || 50;
-      const order = document.getElementById("order").value || "fecha";
-      const fields = document.getElementById("fields").value;
+    async function cargar(){
+      const qs=new URLSearchParams();
+      const desde=buildDateParam("desde_d","desde_h");
+      const hasta=buildDateParam("hasta_d","hasta_h");
+      const geoName=document.getElementById("geo_name").value;
+      const limit=document.getElementById("limit").value||50;
+      const order=document.getElementById("order").value||"fecha";
+      const fields=document.getElementById("fields").value;
 
-      if (desde) qs.set("desde", desde);
-      if (hasta) qs.set("hasta", hasta);
-      if (geoName) qs.set("geo_name", geoName);
-      if (fields) qs.set("fields", fields);
-      qs.set("limit", limit);
-      qs.set("order", order);
+      if(desde) qs.set("desde",desde);
+      if(hasta) qs.set("hasta",hasta);
+      if(geoName) qs.set("geo_name",geoName);
+      if(fields) qs.set("fields",fields);
+      qs.set("limit",limit);
+      qs.set("order",order);
 
-      const url = `/records?${qs.toString()}`;
-      const status = document.getElementById("status");
-      status.textContent = "Cargando... " + url;
+      const url=`/records?${qs.toString()}`;
+      const status=document.getElementById("status");
+      status.textContent="Cargando... "+url;
 
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+      try{
+        const res=await fetch(url);
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data=await res.json();
         pintarTabla(data);
-        status.textContent = `OK · ${data.length} filas`;
-      } catch (e) {
-        status.textContent = "Error: " + e.message;
+        status.textContent=`OK · ${data.length} filas`;
+      }catch(e){
+        status.textContent="Error: "+e.message;
       }
     }
 
-    document.getElementById("btnBuscar").addEventListener("click", cargar);
-    document.getElementById("btnLimpiar").addEventListener("click", () => {
-      document.getElementById("desde").value = "";
-      document.getElementById("hasta").value = "";
-      document.getElementById("geo_name").value = "";
-      document.getElementById("fields").value = "";
-      document.getElementById("limit").value = 50;
-      document.getElementById("order").value = "fecha";
-      document.getElementById("status").textContent = "";
-      document.getElementById("thead-row").innerHTML = "";
-      document.querySelector("#tabla tbody").innerHTML = "";
-    });
+    async function cargarUltimoDia(){
+      const status=document.getElementById("status");
+      status.textContent="Buscando último día con datos...";
+      try{
+        const res=await fetch("/records?limit=1000&fields=fecha&order=fecha");
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data=await res.json();
+        if(!data.length){ status.textContent="Sin datos."; return; }
+        const fechas=data.map(d=>d.fecha).filter(Boolean).map(s=>new Date(s)).sort((a,b)=>a-b);
+        const last=fechas[fechas.length-1];
+        const y=last.getFullYear(), m=String(last.getMonth()+1).padStart(2,"0"), d=String(last.getDate()).padStart(2,"0");
+        document.getElementById("desde_d").value=`${y}-${m}-${d}`;
+        document.getElementById("hasta_d").value=`${y}-${m}-${d}`;
+        document.getElementById("desde_h").value="";
+        document.getElementById("hasta_h").value="";
+        await cargar();
+      }catch(e){
+        status.textContent="Error (último día): "+e.message;
+      }
+    }
 
-    // Carga inicial sin filtros: últimas 50 filas (según orden por 'fecha')
+    document.getElementById("btnBuscar").addEventListener("click",cargar);
+    document.getElementById("btnLimpiar").addEventListener("click",()=>{
+      for(const id of ["desde_d","desde_h","hasta_d","hasta_h","geo_name","fields"]){
+        document.getElementById(id).value="";
+      }
+      document.getElementById("limit").value=50;
+      document.getElementById("order").value="fecha";
+      document.getElementById("status").textContent="";
+      document.getElementById("thead-row").innerHTML="";
+      document.querySelector("#tabla tbody").innerHTML="";
+    });
+    document.getElementById("btnUltimoDia").addEventListener("click",cargarUltimoDia);
+
     cargar();
   </script>
 </body>
