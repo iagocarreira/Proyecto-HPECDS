@@ -5,60 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Predicción {{ model }}</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f0f4f8;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-        }
-        .plot-container {
-            position: relative;
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-        }
-        .close-button {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            font-size: 1.5em;
-            font-weight: bold;
-            color: #555;
-            text-decoration: none;
-            cursor: pointer;
-            line-height: 1; /* Asegura el centrado de la X */
-            padding: 5px;
-            transition: color 0.2s;
-        }
-        .close-button:hover {
-            color: #ff0000;
-        }
-        h2 {
-            color: #007bff;
-            margin-top: 0;
-            margin-bottom: 20px;
-        }
+        /* Estilos sin cambios (los mismos que tenías) */
+        body { font-family: Arial, sans-serif; background-color: #f0f4f8; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        .container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; }
+        h2 { color: #007bff; margin-top: 0; margin-bottom: 20px; }
+        .back-button { display: inline-block; margin-bottom: 20px; text-decoration: none; padding: 10px 15px; background-color: #555; color: white; border-radius: 5px; }
     </style>
 </head>
 <body>
-    <div class="plot-container">
-        <a href="/" class="close-button" title="Cerrar y volver al inicio">
-            &times; 
-        </a>
+    <div class="container">
+        <a href="/" class="back-button">← Volver al Panel de Control</a>
+        
+        {% if error %}
+            <h2 style="color: red;">Error en la Predicción</h2>
+            <p>{{ error }}</p>
+        {% else %}
+            <h2>Resultados de Predicción (Modelo {{ model }})</h2>
+            
+            {% if date %}
+                <p>Mostrando predicción para el día: <strong>{{ date }}</strong></p>
+            {% else %}
+                <p>Mostrando predicción basada en los datos más recientes.</p>
+            {% endif %}
 
-        <h2>Resultados de Predicción (Modelo {{ model }})</h2>
-        
-        <img src="data:image/png;base64,{{ img_data }}" alt="Gráfica de Predicción" style="max-width: 100%; height: auto;">
-        
-        <p style="text-align: center; margin-top: 20px; color: #777;">
-            El modelo {{ model }} ofrece la predicción de la demanda eléctrica a corto plazo.
-        </p>
+            <img src="data:image/png;base64,{{ img_data }}" alt="Gráfica de Predicción" style="max-width: 100%; height: auto;">
+        {% endif %}
     </div>
 </body>
 </html>

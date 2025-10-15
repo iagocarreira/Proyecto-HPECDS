@@ -1,193 +1,182 @@
-# api_main.py
 import os
 import io
 import pandas as pd
 import numpy as np
+
+# Configurar el backend de Matplotlib
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import base64
-import requests 
-from datetime import datetime, timedelta # Necesario para calcular las fechas de la API de Datos
-from flask import Flask, jsonify, request, send_file, render_template
+from datetime import datetime, timedelta
 
-# Importaciones de Modelado
-from tensorflow.keras.models import load_model 
-from sklearn.preprocessing import MinMaxScaler 
-import lightgbm as lgb 
+from flask import Flask, request, render_template
 
-# --- CONFIGURACIÓN GLOBAL Y ESTRUCTURA DEL MODELO ---
+# Importaciones de Modelado y BD
+from sqlalchemy import create_engine, MetaData, Table, select, and_
+from tensorflow.keras.models import load_model
+import joblib
+
+# --- CONFIGURACIÓN GLOBAL Y PARÁMETROS CRÍTICOS ---
 app = Flask(__name__)
-MODELS = {}
-SCALER = MinMaxScaler() 
+MODELS, SCALER = {}, None
+LOOK_BACK, NUM_FEATURES, PREDICTION_STEPS = 24, 3, 288
+PREDICTION_DATA_WINDOW_DAYS, API_DATA_URL = 3, "http://127.0.0.1:5002"
 
-# Constantes del modelo (Debe coincidir con tu entrenamiento LSTM/LGBM)
-LOOK_BACK = 24 
-NUM_FEATURES = 3 # (demanda_real, demanda_prevista, demanda_programada)
+# --- Conexión a Azure SQL ---
+SERVER, DATABASE, USER, PASSWORD = "udcserver2025.database.windows.net", "grupo_1", "ugrupo1", "HK9WXIJaBp2Q97haePdY"
+ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes")
+engine, tabla_semanal, tabla_historica = None, None, None
+try:
+    engine = create_engine(ENGINE_URL, pool_pre_ping=True)
+    meta = MetaData()
+    tabla_semanal = Table("demanda_peninsula_semana", meta, autoload_with=engine, schema="dbo")
+    tabla_historica = Table("demanda_peninsula", meta, autoload_with=engine, schema="dbo")
+    print("INFO: Conexión a la BD establecida.")
+except Exception as e:
+    print(f"ERROR CRÍTICO: No se pudo conectar a la base de datos. {e}")
 
-# CONFIGURACIÓN DEL MICROSERVICIO DE DATOS (Puerto 5002)
-API_DATA_URL = "http://127.0.0.1:5002" 
-DEFAULT_PREDICT_DAYS = 3 # Predice sobre los datos de los últimos 3 días
-DEFAULT_VIEW_DAYS = 7    # Muestra datos de los últimos 7 días
 
-
-def fetch_data_from_api(days: int):
-    """
-    Solicita datos históricos a la API de Datos (http://127.0.0.1:5002/records).
-    Incluye todos los parámetros necesarios para satisfacer la validación de FastAPI.
-    """
-    
-    # 1. Calcular el rango de fechas en formato ISO completo
-    hoy = datetime.now()
-    inicio_dt = hoy - timedelta(days=days)
-
-    # Formato ISO 8601 explícito: Inicio del día y fin a la hora actual (sin segundos flotantes)
-    inicio = inicio_dt.strftime("%Y-%m-%d") + "T00:00:00" 
-    fin = hoy.strftime("%Y-%m-%d") + hoy.strftime("T%H:%M:%S") 
-
-    # 2. Parámetros explícitos para satisfacer la validación de FastAPI
-    limit = 10000
-    offset = 0
-    geo_name = "Península" # Valor por defecto extraído del formulario de tu compañera
-    fields = "" # Cadena vacía para devolver todas las columnas por defecto
-
-    # 3. Construir la URL con TODOS los parámetros necesarios
-    url = (f"{API_DATA_URL}/records?limit={limit}&offset={offset}"
-           f"&desde={inicio}&hasta={fin}&geo_name={geo_name}&fields={fields}")
-
-    print(f"DEBUG: Llamando a API de Datos con URL: {url}")
-    
-    try:
-        response = requests.get(url) 
-        # Si la API de Datos responde con un error (4xx o 5xx), se lanza la excepción.
-        response.raise_for_status() 
-        
-        return response.json()
-
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR: Fallo al conectar con la API de Datos. URL: {url}. Detalles: {e}")
-        return None
-    
-# --- FUNCIÓN DE UTILIDAD: CARGA DE OBJETOS ---
 def load_models_at_startup():
-    """Carga los modelos pesados y el objeto scaler una única vez al iniciar la API."""
-    global MODELS
-    
-    # 1. Simulación o Carga del Scaler
-    temp_data = np.zeros((10, NUM_FEATURES)) 
-    SCALER.fit(temp_data)
-    print("INFO: Scaler cargado/simulado.")
-    
-    # 2. Carga del Modelo LSTM (Keras)
+    global MODELS, SCALER
     try:
-        MODELS['LSTM'] = load_model("modelo_lstm_multivariate.keras") 
+        SCALER = joblib.load("scaler_lstm_multivariate.joblib")
+        print("INFO: Scaler cargado.")
+    except Exception as e:
+        print(f"ERROR CRÍTICO al cargar el scaler: {e}")
+    try:
+        MODELS['LSTM'] = load_model("modelo_lstm_multivariate.keras")
         print("INFO: Modelo LSTM cargado.")
     except Exception as e:
-        print(f"ERROR: No se pudo cargar el modelo LSTM. {e}")
-        
-    # 3. Carga del Modelo LightGBM
+        print(f"ERROR al cargar el modelo LSTM: {e}")
+
+def fetch_data_from_db(table_to_query: Table, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    if not engine or table_to_query is None: return pd.DataFrame()
+    query = select(table_to_query).where(and_(table_to_query.c.fecha >= start_date, table_to_query.c.fecha <= end_date)).order_by(table_to_query.c.fecha)
     try:
-        MODELS['LGBM'] = lgb.Booster(model_file="modelo_lgbm_multivariate.txt")
-        print("INFO: Modelo LightGBM cargado.")
+        with engine.connect() as conn:
+            df = pd.read_sql(query, conn)
+            print(f"DEBUG: Se obtuvieron {len(df)} registros de '{table_to_query.name}'")
+            return df
     except Exception as e:
-        print(f"ERROR: No se pudo cargar el modelo LightGBM. {e}")
+        print(f"ERROR al consultar '{table_to_query.name}': {e}")
+        return pd.DataFrame()
 
+def generate_prediction_plot_image(model_name: str, target_date: str = None):
+    # --- 1. Comprobaciones y selección de tabla ---
+    if 'LSTM' not in MODELS: return None, "Error: Modelo LSTM no cargado."
+    if SCALER is None: return None, "Error crítico: SCALER no cargado."
 
-# --- FUNCIÓN DE PLOT Y PREDICCIÓN ---
-def generate_prediction_plot_image(model_name: str):
-    """Genera la predicción usando datos del microservicio y devuelve la gráfica."""
-    if model_name not in MODELS:
-        return None, f"Modelo '{model_name}' no cargado o no encontrado."
+    # --- 2. Lógica de obtención de datos ---
+    features = ['valor_real', 'valor_previsto', 'valor_programado']
 
-    # 1. FETCHING DE DATOS REALES (usamos los últimos 3 días por defecto)
-    historical_data = fetch_data_from_api(days=DEFAULT_PREDICT_DAYS)
-    if not historical_data:
-        return None, "No se pudo obtener datos para la predicción. La API de Datos está inaccesible."
-    
-    df_data = pd.DataFrame(historical_data)
-    # *******************************************************************
-    # En la realidad, AQUÍ iría la lógica completa de:
-    # 1. Preprocesar y re-secuenciar df_data.
-    # 2. ESCALAR (con SCALER) y predecir con MODELS[model_name].
-    # *******************************************************************
+    if target_date:
+        # MODO 1: Predecir un día específico (requiere datos futuros)
+        prediction_day = datetime.strptime(target_date, "%Y-%m-%d")
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        table_to_use = tabla_semanal if prediction_day.date() >= seven_days_ago.date() else tabla_historica
+        if table_to_use is None: return None, "Error: Conexión a BD no disponible."
 
-    # --- SIMULACIÓN DE RESULTADOS ---
-    # Usamos los datos obtenidos para que el plot sea coherente.
-    real_demand = df_data['valor_real'].iloc[:100]
-    dates = pd.to_datetime(df_data['fecha']).iloc[:100]
-    
-    model_type = "LSTM" if model_name == 'LSTM' else "LGBM"
-    color = 'forestgreen' if model_type == 'LSTM' else 'darkorange'
-    
-    # Simulación de la predicción, usando el valor real para el eje.
-    prediction = real_demand + np.random.normal(0, 250, len(real_demand)) * (0.5 if model_type == 'LSTM' else 1.5) 
+        end_history = prediction_day - timedelta(microseconds=1)
+        start_history = end_history - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
+        df_history = fetch_data_from_db(table_to_use, start_history, end_history)
+        
+        end_prediction_day = prediction_day + timedelta(days=1) - timedelta(microseconds=1)
+        df_future_features = fetch_data_from_db(table_to_use, prediction_day, end_prediction_day)
+        if len(df_future_features) < PREDICTION_STEPS: return None, f"Faltan datos de 'previsto'/'programado' para el día {prediction_day.date()}. Se necesitan {PREDICTION_STEPS}."
+        
+        df_actuals_for_plot = df_future_features.copy()
+        
+    else:
+        # MODO 2: Predecir "a partir de ahora" (usando proxy de datos de hace un año)
+        table_to_use = tabla_semanal
+        end_dt, start_dt = datetime.now(), datetime.now() - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
+        df_history = fetch_data_from_db(table_to_use, start_dt, end_dt)
+        if len(df_history) < LOOK_BACK: return None, f"Datos históricos insuficientes ({len(df_history)}). Se necesitan {LOOK_BACK}."
+        
+        df_actuals_for_plot = df_history.copy()
+        prediction_day = df_history['fecha'].iloc[-1]
+        
+        # --- ¡NUEVA LÓGICA! ---
+        # Buscamos los datos de 'previsto' y 'programado' de hace un año como sustitutos.
+        print("DEBUG: Buscando datos proxy de hace un año para 'previsto' y 'programado'...")
+        start_proxy = prediction_day - timedelta(days=365)
+        end_proxy = start_proxy + timedelta(days=1)
+        df_proxy_futures = fetch_data_from_db(tabla_historica, start_proxy, end_proxy)
+        
+        if len(df_proxy_futures) < PREDICTION_STEPS:
+            return None, "No se encontraron datos de 'previsto'/'programado' para hoy, y tampoco hay datos de respaldo de hace un año."
+        
+        # Renombramos las columnas para que coincidan y las usamos como nuestros "datos futuros"
+        df_future_features = df_proxy_futures.copy()
+        # --- FIN NUEVA LÓGICA ---
 
-    # --- Generación de la Gráfica en Memoria ---
-    img_data = io.BytesIO()
-    plt.figure(figsize=(12, 6))
-    plt.style.use('seaborn-v0_8-whitegrid')
+    # --- 3. Preparar datos para el bucle de predicción ---
+    df_history_processed = df_history[features].fillna(method='ffill').fillna(0)
+    scaled_history = SCALER.transform(df_history_processed)
     
-    plt.plot(dates, real_demand, label='Demanda Real (MW)', linewidth=1.5, color='steelblue')
-    plt.plot(dates, prediction, label=f'Predicción {model_name} ({DEFAULT_PREDICT_DAYS} Días)', linewidth=2.5, alpha=0.8, color=color)
-    
-    plt.title(f'Resultados de Predicción | Modelo: {model_name}', fontsize=16)
+    future_features_processed = df_future_features[features].fillna(method='ffill').fillna(0)
+    scaled_future_features = SCALER.transform(future_features_processed)
+
+    current_batch = scaled_history[-LOOK_BACK:].reshape(1, LOOK_BACK, NUM_FEATURES)
+    all_predictions_scaled = []
+
+    # --- 4. Bucle de predicción autoregresiva ---
+    model_lstm = MODELS['LSTM']
+    for i in range(PREDICTION_STEPS):
+        next_pred_scaled = model_lstm.predict(current_batch, verbose=0)
+        all_predictions_scaled.append(next_pred_scaled[0, 0])
+        
+        new_row = np.array([
+            next_pred_scaled[0, 0],
+            scaled_future_features[i, 1],
+            scaled_future_features[i, 2]
+        ]).reshape(1, 1, NUM_FEATURES)
+        current_batch = np.append(current_batch[:, 1:, :], new_row, axis=1)
+
+    # --- 5. Invertir la escala y preparar la gráfica ---
+    predictions_dummy = np.zeros((len(all_predictions_scaled), NUM_FEATURES)); predictions_dummy[:, 0] = all_predictions_scaled
+    predictions_real_mw = SCALER.inverse_transform(predictions_dummy)[:, 0]
+
+    if not df_actuals_for_plot.empty:
+        real_demand, dates_real = df_actuals_for_plot['valor_real'], pd.to_datetime(df_actuals_for_plot['fecha'])
+    else:
+        real_demand, dates_real = pd.Series([]), pd.Series([])
+
+    dates_pred = pd.to_datetime(pd.date_range(start=prediction_day, periods=PREDICTION_STEPS, freq='5min'))
+
+    # --- 6. Generar la gráfica ---
+    plt.figure(figsize=(14, 7)); plt.style.use('seaborn-v0_8-whitegrid')
+    plt.plot(dates_real, real_demand, label='Demanda Real (MW)', color='steelblue', marker='.', markersize=4)
+    plt.plot(dates_pred, predictions_real_mw, label='Predicción LSTM', color='darkorange', linestyle='--', linewidth=2)
+    title_date = f"para el día {prediction_day.date()}" if target_date else f"a partir de {prediction_day.strftime('%Y-%m-%d %H:%M')}"
+    plt.title(f'Predicción de Demanda con LSTM {title_date}', fontsize=16)
     plt.xlabel("Tiempo"); plt.ylabel("Potencia (MW)"); plt.legend()
+    all_values = pd.concat([pd.Series(predictions_real_mw), real_demand])
+    if not all_values.dropna().empty: plt.ylim(all_values.min()*0.9, all_values.max()*1.1)
     plt.grid(True, linestyle='--', alpha=0.6); plt.tight_layout()
     
-    plt.savefig(img_data, format='png')
-    plt.close()
+    img_data = io.BytesIO(); plt.savefig(img_data, format='png'); plt.close()
     img_data.seek(0)
     return img_data, None
 
-
-# --- ¡NUEVO! LLAMADA DE INICIALIZACIÓN ---
-load_models_at_startup() 
-
-
-# --- ENDPOINT PRINCIPAL (Página de Selección) ---
-@app.route("/", methods=["GET"])
-def home():
-    """Sirve la página principal (Hero Section)."""
-    return render_template("index.html")
-
-
-# --- ENDPOINT DE VISUALIZACIÓN DE DATOS (/data_view) ---
-@app.route("/data_view", methods=["GET"])
-def data_view():
-    """Obtiene datos de la API de Datos y los muestra en una tabla HTML."""
-    records = fetch_data_from_api(days=DEFAULT_VIEW_DAYS)
-    
-    if records:
-        # Asumiendo que la API de datos devuelve una lista de diccionarios
-        return render_template("data_view.html", records=records)
-    else:
-        return render_template("data_view.html", error="No se pudieron cargar los datos. Verifique que la API de Datos (Puerto 5002) esté corriendo.")
-
-
-# --- ENDPOINT DE PREDICCIÓN (Devuelve el HTML con la gráfica) ---
-@app.route("/predict_and_plot/<model_name>", methods=["GET"])
-def predict_plot(model_name):
-    """
-    Genera la gráfica de predicción, la codifica y la renderiza en el visor HTML.
-    """
-    model_name = model_name.upper()
-    
-    img_data_buffer, error = generate_prediction_plot_image(model_name)
-    
-    if error:
-        # Usa la plantilla de visor para mostrar el error
-        return render_template("plot_view.html", error=error) 
-        
-    # Codificar la imagen a Base64 para incrustarla en el HTML
-    img_bytes = img_data_buffer.read()
-    img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-    
-    # Renderizar la plantilla que muestra la imagen
-    return render_template(
-        "plot_view.html",
-        model=model_name,
-        img_data=img_base64
-    )
-
-
-# --- EJECUCIÓN ---
+# --- INICIALIZACIÓN Y ENDPOINTS ---
+load_models_at_startup()
+@app.route("/")
+def home(): return render_template("index.html", api_data_url=API_DATA_URL)
+@app.route("/predict_latest/<model_name>", methods=["GET"])
+def predict_latest(model_name):
+    img_data_buffer, error = generate_prediction_plot_image('LSTM', target_date=None)
+    if error: return render_template("plot_view.html", error=error, model='LSTM')
+    img_base64 = base64.b64encode(img_data_buffer.read()).decode('utf-8')
+    return render_template("plot_view.html", model='LSTM', img_data=img_base64)
+@app.route("/predict_on_date", methods=["POST"])
+def predict_on_date():
+    prediction_date = request.form.get("prediction_date")
+    if not prediction_date: return render_template("plot_view.html", error="No se seleccionó fecha.", model='LSTM')
+    img_data_buffer, error = generate_prediction_plot_image('LSTM', target_date=prediction_date)
+    if error: return render_template("plot_view.html", error=error, model='LSTM')
+    img_base64 = base64.b64encode(img_data_buffer.read()).decode('utf-8')
+    return render_template("plot_view.html", model='LSTM', img_data=img_base64, date=prediction_date)
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
