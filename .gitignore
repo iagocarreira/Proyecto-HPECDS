@@ -3,3 +3,4 @@ modelo_demanda_lgbm.txt
 \venv
 modelo_lstm_multivariate.keras
 scaler_lstm_multivariate.joblib
+\__pycache__
