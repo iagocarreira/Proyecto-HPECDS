@@ -164,19 +164,31 @@ def generate_prediction_plot_image(model_name: str, target_date: str = None):
 load_models_at_startup()
 @app.route("/")
 def home(): return render_template("index.html", api_data_url=API_DATA_URL)
+
 @app.route("/predict_latest/<model_name>", methods=["GET"])
 def predict_latest(model_name):
     img_data_buffer, error = generate_prediction_plot_image('LSTM', target_date=None)
     if error: return render_template("plot_view.html", error=error, model='LSTM')
     img_base64 = base64.b64encode(img_data_buffer.read()).decode('utf-8')
     return render_template("plot_view.html", model='LSTM', img_data=img_base64)
-@app.route("/predict_on_date", methods=["POST"])
-def predict_on_date():
-    prediction_date = request.form.get("prediction_date")
-    if not prediction_date: return render_template("plot_view.html", error="No se seleccionó fecha.", model='LSTM')
+
+@app.route("/predict_custom", methods=["POST"])
+def predict_custom():
+    # 1. Obtenemos la fecha del campo correcto del formulario ('desde_fecha')
+    prediction_date = request.form.get("desde_fecha")
+    
+    # 2. El resto de la lógica es idéntica
+    if not prediction_date:
+        return render_template("plot_view.html", error="No se seleccionó ninguna fecha.", model='LSTM')
+        
     img_data_buffer, error = generate_prediction_plot_image('LSTM', target_date=prediction_date)
-    if error: return render_template("plot_view.html", error=error, model='LSTM')
+    
+    if error:
+        return render_template("plot_view.html", error=error, model='LSTM')
+        
     img_base64 = base64.b64encode(img_data_buffer.read()).decode('utf-8')
+    
+    # Pasamos la fecha a la plantilla para que se muestre en el título
     return render_template("plot_view.html", model='LSTM', img_data=img_base64, date=prediction_date)
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

@@ -4,53 +4,134 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GreenEnergy Insights: Panel de Control</title>
+    
     <style>
-        /* Estilos sin cambios */
         @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
-        body { font-family: 'Roboto', sans-serif; margin: 0; padding: 0; color: #333; background-color: #f4f7f9; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        .container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; max-width: 800px; }
-        h1 { font-weight: 700; color: #0056b3; margin-bottom: 10px; }
-        p { color: #666; margin-bottom: 30px; }
-        .action-box { border: 1px solid #ddd; border-radius: 8px; padding: 25px; margin-top: 20px; }
-        h2 { font-weight: 400; color: #333; margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px;}
-        .form-group { display: flex; justify-content: center; align-items: center; gap: 15px; flex-wrap: wrap; }
-        .button, input[type="date"] { padding: 12px 20px; font-size: 1em; border-radius: 5px; border: 1px solid #ccc; cursor: pointer; transition: all 0.3s ease; }
-        .button { text-decoration: none; color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .button-lstm { background-color: #28a745; border-color: #28a745; }
-        .button-lgbm { background-color: #ff8c00; border-color: #ff8c00; }
-        .button-data { background-color: #007bff; border-color: #007bff; display: inline-block; margin-top: 10px; }
-        .button:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
-        .separator { margin: 30px 0; font-weight: bold; color: #aaa; }
+        
+        /* Estilos generales */
+        body { 
+            font-family: 'Roboto', sans-serif; margin: 0; padding: 0; color: white; 
+            height: 100vh; overflow: hidden; background-color: #333; 
+        }
+        .hero-background {
+            background-image: url("{{ url_for('static', filename='background.png') }}");
+            background-size: cover; background-position: center; position: fixed; top: 0; left: 0; 
+            width: 100%; height: 100%; z-index: -1; filter: brightness(0.5); 
+        }
+        
+        /* Barra de Navegación */
+        header {
+            position: absolute; top: 0; width: 100%; padding: 25px 50px; display: flex; 
+            justify-content: space-between; align-items: center; z-index: 10;
+        }
+        .logo { font-size: 1.5em; font-weight: 700; letter-spacing: 2px; color: white; text-decoration: none; }
+        nav a { color: white; text-decoration: none; font-weight: 300; margin-left: 30px; transition: color 0.3s; }
+        nav a:hover { color: #007bff; }
+        nav a.api-button { background-color: #007bff; padding: 8px 15px; border-radius: 4px; font-weight: 400; }
+        
+        /* Contenido Principal */
+        .hero-content { 
+            height: 100vh; display: flex; flex-direction: column; align-items: center; 
+            justify-content: center; text-align: center; padding: 0 50px; 
+            width: 100%;
+        }
+        h1 { font-size: 3em; /* Título un poco más pequeño para dar espacio */ font-weight: 300; line-height: 1.1; margin-bottom: 5px; letter-spacing: 2px; }
+        .tagline { font-size: 1.2em; font-weight: 400; margin-bottom: 40px; }
+        
+        /* Contenedor de 2 Columnas */
+        .prediction-grid {
+            display: flex;
+            gap: 30px;
+            margin-top: 20px;
+            max-width: 1100px; /* Hacemos el contenedor más ancho */
+            width: 90%;
+            justify-content: center;
+        }
+
+        /* ESTILOS DE CUADRO GRANDE */
+        .action-box { 
+            background-color: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(8px); 
+            border-radius: 10px; 
+            padding: 40px 30px; /* Más padding interno para hacerlo más grande */
+            flex: 1; 
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            min-height: 250px; /* Aseguramos una altura mínima */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between; /* Distribuye el contenido verticalmente */
+        }
+        .action-box h2 { font-size: 1.4em; font-weight: 500; margin-top: 0; margin-bottom: 25px; }
+        
+        /* Estilos de Botones/Formularios */
+        .form-group { display: flex; flex-direction: column; align-items: center; gap: 15px; }
+        .button, input[type="date"], select { 
+            padding: 12px 20px; font-size: 1em; border-radius: 5px; border: none; cursor: pointer; 
+            transition: all 0.3s ease; font-weight: 500; width: 100%; box-sizing: border-box; 
+            text-align: center;
+        }
+        .button { text-decoration: none; color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        .button-lstm { background-color: #008000; }
+        .button-lgbm { background-color: #ff8c00; }
+        .button-data { background-color: #007bff; }
+        .button:hover, button:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.4); }
+        
+        input[type="date"], select { color: #333; background-color: white; }
+        
+        /* Ajuste específico para el botón del formulario */
+        .submit-button-container { margin-top: 20px; }
+        
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Panel de Predicción Energética</h1>
-        <p>Seleccione una opción para analizar la demanda eléctrica.</p>
+    <div class="hero-background"></div>
 
-        <div class="action-box">
-            <h2>1. Predecir para un Día Específico</h2>
-            <form action="/predict_on_date" method="post" class="form-group">
-                <input type="date" name="prediction_date" required>
-                <button type="submit" name="model" value="LSTM" class="button button-lstm">Predecir con LSTM</button>
-                <button type="submit" name="model" value="LGBM" class="button button-lgbm">Predecir con LightGBM</button>
-            </form>
-        </div>
-        <div class="action-box">
-            <h2>2. Predecir con los Datos más Recientes</h2>
-            <div class="form-group">
-                <a href="/predict_latest/LSTM" class="button button-lstm">Últimas Horas (LSTM)</a>
-                <a href="/predict_latest/LGBM" class="button button-lgbm">Últimas Horas (LGBM)</a>
+    <header>
+        <a href="/" class="logo">GREEN ENERGY INSIGHTS</a>
+        <nav>
+            <a href="{{ api_data_url }}" target="_blank">Visualización de Datos</a>
+            
+            <a href="#">Documentación</a>
+            <a href="{{ api_data_url }}/docs" target="_blank" class="api-button">API Docs</a>
+        </nav>
+    </header>
+
+    <section class="hero-content">
+        <h1>PREDICCIÓN DE DEMANDA INTELIGENTE</h1>
+        <p class="tagline">Panel de Control de Análisis de Demanda Eléctrica.</p>
+
+        <div class="prediction-grid">
+            
+            <div class="action-box">
+                <div>
+                    <h2>Predecir un Día Específico Pasado</h2>
+                    <p style="font-weight: 300; margin-bottom: 25px;">Seleccione la fecha para la que desea generar el pronóstico.</p>
+                </div>
+                
+                <form action="/predict_custom" method="POST" class="form-group">
+                    <input type="date" name="desde_fecha" required>
+                    <input type="hidden" name="hasta_fecha" value="{{ '9999-12-31' }}"> <input type="hidden" name="model_select" value="LSTM"> <div class="submit-button-container">
+                        <button type="submit" class="button button-lstm">
+                            Predecir
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="action-box">
+                <div>
+                    <h2>Predicción a Futuro</h2>
+                    <p style="font-weight: 300; margin-bottom: 25px;">
+                        Pronóstico a 24 horas basado en los datos más recientes.
+                    </p>
+                </div>
+                <div class="form-group">
+                    <a href="/predict_latest/LSTM" class="button button-lstm">
+                        Predecir Ahora
+                    </a>
+                </div>
             </div>
         </div>
-
-        <div class="separator">O</div>
-
-        <div class="action-box">
-            <h2>3. Explorar Datos Históricos</h2>
-            <p style="margin-bottom: 15px;">Accede a la interfaz externa para filtrar y visualizar todos los registros.</p>
-            <a href="{{ api_data_url }}/ui/" target="_blank" class="button button-data">Abrir Explorador de Datos</a>
-        </div>
-    </div>
+    </section>
 </body>
 </html>

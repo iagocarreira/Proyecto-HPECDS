@@ -5,15 +5,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Predicción {{ model }}</title>
     <style>
-        /* Estilos sin cambios (los mismos que tenías) */
-        body { font-family: Arial, sans-serif; background-color: #f0f4f8; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        .container { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-width: 90%; }
-        h2 { color: #007bff; margin-top: 0; margin-bottom: 20px; }
-        .back-button { display: inline-block; margin-bottom: 20px; text-decoration: none; padding: 10px 15px; background-color: #555; color: white; border-radius: 5px; }
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+        
+        body { 
+            font-family: 'Roboto', sans-serif; 
+            margin: 0; padding: 20px; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            min-height: 100vh;
+            
+            /* ===== NUEVO FONDO CON IMAGEN ===== */
+            background-image: url("{{ url_for('static', filename='background_plot.jpg') }}");
+            background-size: cover;      /* Asegura que la imagen cubra todo el fondo */
+            background-position: center; /* Centra la imagen */
+            background-attachment: fixed;/* Fija la imagen para que no se mueva con el scroll */
+        }
+        
+        .plot-container { 
+            /* ===== ESTILO MEJORADO DEL CONTENEDOR ===== */
+            background-color: rgba(255, 255, 255, 0.98); /* Un blanco ligeramente translúcido */
+            backdrop-filter: blur(5px);                  /* Efecto "cristal" para navegadores compatibles */
+            padding: 30px;
+            border-radius: 15px;                         /* Bordes más redondeados */
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);    /* Sombra más pronunciada */
+            max-width: 95%;
+            width: 1100px;
+            box-sizing: border-box;
+            position: relative;
+            border: 1px solid rgba(255, 255, 255, 0.2); /* Un borde sutil que captura la luz */
+        }
+
+        h2 { 
+            color: #0056b3; 
+            margin-top: 0; 
+            margin-bottom: 25px; 
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .back-button { 
+            display: inline-block; 
+            margin-bottom: 25px; 
+            text-decoration: none; 
+            padding: 10px 18px; 
+            background-color: #555; 
+            color: white; 
+            border-radius: 5px; 
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .back-button:hover { 
+            transform: translateY(-2px); 
+            background-color: #007bff; 
+        }
+
+        img {
+            max-width: 100%; 
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        p {
+            color: #666;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="plot-container">
         <a href="/" class="back-button">← Volver al Panel de Control</a>
         
         {% if error %}
@@ -22,13 +82,9 @@
         {% else %}
             <h2>Resultados de Predicción (Modelo {{ model }})</h2>
             
-            {% if date %}
-                <p>Mostrando predicción para el día: <strong>{{ date }}</strong></p>
-            {% else %}
-                <p>Mostrando predicción basada en los datos más recientes.</p>
-            {% endif %}
+            <p>Mostrando predicción para el día: <strong>{{ date if date else 'Últimos datos disponibles' }}</strong></p>
 
-            <img src="data:image/png;base64,{{ img_data }}" alt="Gráfica de Predicción" style="max-width: 100%; height: auto;">
+            <img src="data:image/png;base64,{{ img_data }}" alt="Gráfica de Predicción">
         {% endif %}
     </div>
 </body>
