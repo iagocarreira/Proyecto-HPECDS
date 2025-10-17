@@ -1,0 +1,24 @@
+{
+  "rmse": 170.79885684111838,
+  "mae": 133.11495376352303,
+  "mape": 0.5033018600347126,
+  "nrmse_mean": 0.6456275833880839,
+  "nrmse_range": 0.9470935834596782,
+  "baseline_rmse": null,
+  "baseline_mape": null,
+  "mode": "warm",
+  "window_days": 180,
+  "seq_len": 24,
+  "epochs": 30,
+  "n_obs_train": 41472,
+  "n_obs_test": 10369,
+  "features": [
+    "demanda_real",
+    "demanda_prevista",
+    "demanda_programada"
+  ],
+  "targets": [
+    "demanda_real"
+  ],
+  "run_dir": "artifacts\\run_20251015T105350Z"
+}
