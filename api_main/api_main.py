@@ -2,6 +2,7 @@ import os
 import io
 import pandas as pd
 import numpy as np
+from flask import jsonify
 
 # Configurar el backend de Matplotlib
 import matplotlib
@@ -192,3 +193,169 @@ def predict_custom():
     return render_template("plot_view.html", model='LSTM', img_data=img_base64, date=prediction_date)
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
+
+def generate_prediction_series(target_date: str | None = None):
+    """
+    Devuelve dict con:
+      - model, start, end, interval, points (lista {ts, y})
+      - opcionalmente: actuals (si hay 'valor_real' para el rango)
+    """
+    img_buf, err = None, None
+
+    # Reutilizamos casi toda la lógica existente:
+    # NOTA: copiamos el cuerpo de generate_prediction_plot_image,
+    # pero en lugar de pintar, devolvemos 'dates_pred' y 'predictions_real_mw'
+    # + 'dates_real' y 'real_demand' si existen.
+
+    # --- 1. Comprobaciones y selección de tabla ---
+    if 'LSTM' not in MODELS:
+        return None, "Error: Modelo LSTM no cargado."
+    if SCALER is None:
+        return None, "Error crítico: SCALER no cargado."
+
+    features = ['valor_real', 'valor_previsto', 'valor_programado']
+
+    if target_date:
+        prediction_day = datetime.strptime(target_date, "%Y-%m-%d")
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        table_to_use = tabla_semanal if prediction_day.date() >= seven_days_ago.date() else tabla_historica
+        if table_to_use is None:
+            return None, "Error: Conexión a BD no disponible."
+
+        end_history = prediction_day - timedelta(microseconds=1)
+        start_history = end_history - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
+        df_history = fetch_data_from_db(table_to_use, start_history, end_history)
+
+        end_prediction_day = prediction_day + timedelta(days=1) - timedelta(microseconds=1)
+        df_future_features = fetch_data_from_db(table_to_use, prediction_day, end_prediction_day)
+        if len(df_future_features) < PREDICTION_STEPS:
+            return None, f"Faltan datos de 'previsto'/'programado' para el día {prediction_day.date()}. Se necesitan {PREDICTION_STEPS}."
+        df_actuals_for_plot = df_future_features.copy()
+    else:
+        table_to_use = tabla_semanal
+        end_dt, start_dt = datetime.now(), datetime.now() - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
+        df_history = fetch_data_from_db(table_to_use, start_dt, end_dt)
+        if len(df_history) < LOOK_BACK:
+            return None, f"Datos históricos insuficientes ({len(df_history)}). Se necesitan {LOOK_BACK}."
+        df_actuals_for_plot = df_history.copy()
+        prediction_day = df_history['fecha'].iloc[-1]
+
+        start_proxy = prediction_day - timedelta(days=365)
+        end_proxy = start_proxy + timedelta(days=1)
+        df_proxy_futures = fetch_data_from_db(tabla_historica, start_proxy, end_proxy)
+        if len(df_proxy_futures) < PREDICTION_STEPS:
+            return None, "No hay 'previsto'/'programado' para hoy ni respaldo de hace un año."
+        df_future_features = df_proxy_futures.copy()
+
+    # --- 3. Preparación/escala (igual que tu función) ---
+    df_history_processed = df_history[features].fillna(method='ffill').fillna(0)
+    scaled_history = SCALER.transform(df_history_processed)
+
+    future_features_processed = df_future_features[features].fillna(method='ffill').fillna(0)
+    scaled_future_features = SCALER.transform(future_features_processed)
+
+    current_batch = scaled_history[-LOOK_BACK:].reshape(1, LOOK_BACK, NUM_FEATURES)
+    all_predictions_scaled = []
+    model_lstm = MODELS['LSTM']
+    for i in range(PREDICTION_STEPS):
+        next_pred_scaled = model_lstm.predict(current_batch, verbose=0)
+        all_predictions_scaled.append(next_pred_scaled[0, 0])
+        new_row = np.array([
+            next_pred_scaled[0, 0],
+            scaled_future_features[i, 1],
+            scaled_future_features[i, 2]
+        ]).reshape(1, 1, NUM_FEATURES)
+        current_batch = np.append(current_batch[:, 1:, :], new_row, axis=1)
+
+    predictions_dummy = np.zeros((len(all_predictions_scaled), NUM_FEATURES))
+    predictions_dummy[:, 0] = all_predictions_scaled
+    predictions_real_mw = SCALER.inverse_transform(predictions_dummy)[:, 0]
+
+    if not df_actuals_for_plot.empty:
+        real_demand = df_actuals_for_plot['valor_real']
+        dates_real = pd.to_datetime(df_actuals_for_plot['fecha'])
+    else:
+        real_demand, dates_real = pd.Series([], dtype=float), pd.Series([], dtype='datetime64[ns]')
+
+    dates_pred = pd.to_datetime(pd.date_range(start=prediction_day, periods=PREDICTION_STEPS, freq='5min'))
+
+    # --- 4. Empaquetado JSON ---
+    data = {
+        "model": "LSTM",
+        "interval": "5min",
+        "start": dates_pred.iloc[0].isoformat(),
+        "end": dates_pred.iloc[-1].isoformat(),
+        "points": [{"ts": d.isoformat(), "y": float(v)} for d, v in zip(dates_pred, predictions_real_mw)],
+    }
+    if not real_demand.empty:
+        data["actuals"] = [
+            {"ts": d.isoformat(), "y": (None if pd.isna(v) else float(v))}
+            for d, v in zip(dates_real, real_demand)
+        ]
+    return data, None
+
+
+@app.get("/api/predictions_latest")
+def api_predictions_latest():
+    data, err = generate_prediction_series(target_date=None)
+    if err: return jsonify({"error": err}), 400
+    return jsonify(data)
+
+@app.get("/api/predictions")
+def api_predictions_for_date():
+    date = request.args.get("date")  # YYYY-MM-DD
+    if not date:
+        return jsonify({"error": "faltan parámetros: date=YYYY-MM-DD"}), 400
+    data, err = generate_prediction_series(target_date=date)
+    if err: return jsonify({"error": err}), 400
+    return jsonify(data)
+
+@app.get("/api/kpis")
+def api_kpis_for_date():
+    """
+    KPI rápido: si hay solape actual vs pred, calcula MAPE y RMSE en el rango.
+    """
+    date = request.args.get("date")
+    data, err = generate_prediction_series(target_date=date)
+    if err: return jsonify({"error": err}), 400
+    actuals = data.get("actuals", [])
+    pred = {p["ts"]: p["y"] for p in data["points"]}
+    y_true, y_pred = [], []
+    for a in actuals:
+        ts = a["ts"]; y = a["y"]
+        if y is None or ts not in pred: continue
+        y_true.append(y); y_pred.append(pred[ts])
+    if not y_true:
+        return jsonify({"window_points": 0, "mape": None, "rmse": None})
+    y_true = np.array(y_true); y_pred = np.array(y_pred)
+    mape = float(np.mean(np.abs((y_true - y_pred) / np.clip(np.abs(y_true), 1e-6, None))) * 100.0)
+    rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+    return jsonify({"window_points": len(y_true), "mape": mape, "rmse": rmse})
+
+@app.get("/api/anomalies")
+def api_anomalies_for_date():
+    """
+    Detección sencilla por z-score de residuo (|z| > threshold).
+    """
+    date = request.args.get("date")
+    thresh = float(request.args.get("z_threshold", 2.5))
+    data, err = generate_prediction_series(target_date=date)
+    if err: return jsonify({"error": err}), 400
+    actuals = data.get("actuals", [])
+    if not actuals:
+        return jsonify({"anomalies": []})
+    pred = {p["ts"]: p["y"] for p in data["points"]}
+    rows = []
+    for a in actuals:
+        ts = a["ts"]; y = a["y"]
+        if y is None or ts not in pred: continue
+        rows.append({"ts": ts, "residual": y - pred[ts]})
+    if not rows: return jsonify({"anomalies": []})
+    rs = np.array([r["residual"] for r in rows])
+    mu, sd = float(np.mean(rs)), float(np.std(rs) + 1e-9)
+    anomalies = []
+    for r in rows:
+        z = (r["residual"] - mu) / sd
+        if abs(z) >= thresh:
+            anomalies.append({"ts": r["ts"], "residual": float(r["residual"]), "z": float(z), "severity": min(abs(z)/5.0, 1.0)})
+    return jsonify({"mu": mu, "sd": sd, "threshold": thresh, "anomalies": anomalies})

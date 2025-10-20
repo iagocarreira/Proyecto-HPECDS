@@ -264,11 +264,14 @@ y_pred_scaled = model.predict(X_test, verbose=0).flatten()
 # Invertir escalado (col 0 = demanda_real)
 dummy_test = np.zeros((len(y_test), len(features)))
 dummy_test[:, 0] = y_test
-y_test_original = scaler.inverse_transform(dummy_test)[:, 0]
+dummy_test_df = pd.DataFrame(dummy_test, columns=features)
+y_test_original = scaler.inverse_transform(dummy_test_df)[:, 0]
+
 
 dummy_pred = np.zeros((len(y_pred_scaled), len(features)))
 dummy_pred[:, 0] = y_pred_scaled
-y_pred_original = scaler.inverse_transform(dummy_pred)[:, 0]
+dummy_pred_df = pd.DataFrame(dummy_pred, columns=features)
+y_pred_original = scaler.inverse_transform(dummy_pred_df)[:, 0]
 
 # Métricas en MW
 rmse = root_mean_squared_error(y_test_original, y_pred_original)
@@ -322,7 +325,9 @@ if cur_model_p.exists() and cur_scaler_p.exists():
         base_pred_scaled = base_m.predict(X_test_cur, verbose=0).flatten()
         dummy_base = np.zeros((len(base_pred_scaled), len(features)))
         dummy_base[:, 0] = base_pred_scaled
-        base_pred_original = cur_scaler.inverse_transform(dummy_base)[:, 0]
+        dummy_base_df = pd.DataFrame(dummy_base, columns=features)
+        base_pred_original = cur_scaler.inverse_transform(dummy_base_df)[:, 0]
+
 
         base_rmse = root_mean_squared_error(y_test_original, base_pred_original)
         base_mape = mean_absolute_percentage_error(y_test_original, base_pred_original) * 100
@@ -490,10 +495,18 @@ df_an.to_csv(run_dir / "anomalies.csv", index=True)
 # Imprime JSON final (útil para Airflow/XCom o inspección manual)
 print(json.dumps(metrics_out, ensure_ascii=False))
 
-# Promoción condicionada (+ recarga API opcional)
-_promoted = _maybe_promote(run_dir, {"rmse": float(rmse), "mape": float(mape)}, baseline_model_metrics)
-if _promoted:
-    print(f"[INFO] Modelo PROMOCIONADO: {run_dir.name}")
+best_base_rmse = min(base_prev["rmse"], base_prog["rmse"], base_pers["rmse"])
+should_promote = (
+    (rmse < best_base_rmse) and
+    (baseline_model_metrics is None or (rmse < baseline_model_metrics["rmse"] and mape < baseline_model_metrics["mape"]))
+)
+
+if should_promote:
+    _promoted = _maybe_promote(run_dir, {"rmse": float(rmse), "mape": float(mape)}, baseline_model_metrics)
+    if _promoted:
+        print(f"[INFO] Modelo PROMOCIONADO: {run_dir.name}")
+else:
+    print("[INFO] Modelo NO promocionado: no mejora baselines y/o 'current'.")
 
 # =========================
 # 10) INFERENCIA "HOY" (one-step-ahead) + fallback opcional
@@ -526,16 +539,88 @@ def predict_next_step(model, scaler, df_full, look_back=LOOK_BACK):
     if len(df_full) < look_back:
         raise ValueError("No hay suficientes filas para construir la ventana de inferencia.")
     feats = ["demanda_real","demanda_prevista","demanda_programada"]
-    X_win = df_full[feats].values[-look_back:, :]
-    X_scaled = scaler.transform(X_win)
-    X_scaled = np.expand_dims(X_scaled, axis=0)  # (1, look_back, num_features)
+    X_win_df = df_full[feats].iloc[-look_back:]      
+    X_scaled = scaler.transform(X_win_df)           
+    X_scaled = np.expand_dims(X_scaled, axis=0)
+
     y_scaled = model.predict(X_scaled, verbose=0).flatten()[0]
-    dummy = np.zeros((1, len(feats))); dummy[0, 0] = y_scaled  # desescalar como en test
-    y_pred = scaler.inverse_transform(dummy)[0, 0]
+    dummy = np.zeros((1, len(feats))); dummy[0, 0] = y_scaled
+    dummy_df = pd.DataFrame(dummy, columns=feats)           # ← NUEVO
+    y_pred = scaler.inverse_transform(dummy_df)[0, 0]       # ← NUEVO
 
     off = _infer_freq(df_full.index)
     t_next = df_full.index[-1] + off
     return t_next, float(y_pred)
+
+def _step_minutes(index: pd.DatetimeIndex) -> int:
+    """Devuelve el tamaño de paso en minutos según el índice."""
+    try:
+        freq = pd.infer_freq(index)
+    except Exception:
+        freq = None
+    if freq:
+        delta = pd.to_timedelta(freq)
+    else:
+        delta = pd.Series(index).diff().median()
+    if pd.isna(delta):
+        delta = pd.Timedelta(minutes=5)
+    return max(1, int(delta.total_seconds() // 60))
+
+
+def forecast_multi_step(model, scaler, df_hist, look_back, horizon_steps,
+                        future_cov: pd.DataFrame | None = None,
+                        fallback: str = "persist"):
+    """
+    Predice varios pasos hacia delante encadenando (closed-loop).
+    - df_hist: DataFrame histórico con columnas ['demanda_real','demanda_prevista','demanda_programada'].
+    - future_cov: DataFrame opcional indexado por timestamps futuros con columnas
+      ['demanda_prevista','demanda_programada'] para cada paso. Si None o faltan
+      valores, se aplica 'fallback' (persistencia del último valor).
+    - fallback: 'persist' (por defecto) o 'zero'.
+    Devuelve un pd.Series con las predicciones en MW indexadas por fecha futura.
+    """
+    feats = ["demanda_real", "demanda_prevista", "demanda_programada"]
+    df_hist = df_hist.sort_index()
+
+    # Ventana de trabajo en unidades REALES (no escaladas)
+    window = df_hist[feats].values[-look_back:, :].copy()
+    off = _infer_freq(df_hist.index)
+    t = df_hist.index[-1]
+
+    preds, times = [], []
+    for step in range(1, horizon_steps + 1):
+        # Escalar entrada y predecir
+        win_df = pd.DataFrame(window, columns=feats)     
+        x_scaled = scaler.transform(win_df)             
+        y_scaled = model.predict(np.expand_dims(x_scaled, 0), verbose=0).flatten()[0]
+        dummy = np.zeros((1, len(feats))); dummy[0, 0] = y_scaled
+        dummy_df = pd.DataFrame(dummy, columns=feats)        # ← NUEVO
+        y_hat = scaler.inverse_transform(dummy_df)[0, 0]     # ← NUEVO
+
+
+        # Timestamp futuro
+        t = t + off
+
+        # Covariables para t
+        if (future_cov is not None) and (t in future_cov.index):
+            prev_hat = float(future_cov.loc[t, "demanda_prevista"])
+            prog_hat = float(future_cov.loc[t, "demanda_programada"])
+            if np.isnan(prev_hat) or np.isnan(prog_hat):
+                prev_hat = window[-1, 1] if fallback == "persist" else 0.0
+                prog_hat = window[-1, 2] if fallback == "persist" else 0.0
+        else:
+            # Fallback si no hay covariables futuras
+            prev_hat = window[-1, 1] if fallback == "persist" else 0.0
+            prog_hat = window[-1, 2] if fallback == "persist" else 0.0
+
+        # Desplazar ventana: añadimos la fila futura (y_hat, prev_hat, prog_hat)
+        new_row = np.array([y_hat, prev_hat, prog_hat])
+        window = np.vstack([window[1:], new_row])
+
+        preds.append(y_hat); times.append(t)
+
+    return pd.Series(preds, index=pd.DatetimeIndex(times, name="fecha"), name="pred_lstm")
+
 
 # Ejemplo de inferencia (atrapado para no romper si faltan deps)
 try:
@@ -543,3 +628,37 @@ try:
     print(f"[INFERENCIA] Predicción one-step-ahead para {t_pred}: {y_hat:.2f} MW")
 except Exception as e:
     print(f"[WARN] No se pudo ejecutar la inferencia: {e}")
+
+# =========================
+# 10.1) PRONÓSTICO MULTI-STEP (FORZADO)
+# =========================
+HORIZON_MIN = 1440          # ← 24h fijo
+FALLBACK = "persist"        # ← usa último valor si faltan covariables
+print(f"[CFG] Multi-step hardcoded: {HORIZON_MIN} min, fallback={FALLBACK}")
+
+try:
+    step_min = _step_minutes(df.index)
+    steps = max(1, HORIZON_MIN // step_min)
+
+    future_index = pd.date_range(
+        df.index[-1] + _infer_freq(df.index),
+        periods=steps, freq=_infer_freq(df.index)
+    )
+    future_cov = None
+    if set(["demanda_prevista","demanda_programada"]).issubset(df.columns):
+        _cov = df.reindex(future_index)[["demanda_prevista","demanda_programada"]]
+        if not _cov.isna().all().all():
+            future_cov = _cov
+
+    yhat_ms = forecast_multi_step(
+        model, scaler, df, LOOK_BACK, steps,
+        future_cov=future_cov, fallback=FALLBACK
+    )
+
+    out_path = run_dir / f"forecast_{HORIZON_MIN}min.csv"
+    yhat_ms.to_csv(out_path, header=True)
+    print(f"[FORECAST] Guardado multi-step ({HORIZON_MIN} min, {steps} pasos): {out_path}")
+    print(yhat_ms.head(3).to_string())
+    print(yhat_ms.tail(3).to_string())
+except Exception as e:
+    print(f"[ERROR] Multi-step: {e}")
