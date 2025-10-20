@@ -40,12 +40,12 @@ except Exception as e:
 def load_models_at_startup():
     global MODELS, SCALER
     try:
-        SCALER = joblib.load("scaler_lstm_multivariate.joblib")
+        SCALER = joblib.load("artifacts/current/scaler_lstm_multivariate.joblib")
         print("INFO: Scaler cargado.")
     except Exception as e:
         print(f"ERROR CRÍTICO al cargar el scaler: {e}")
     try:
-        MODELS['LSTM'] = load_model("modelo_lstm_multivariate.keras")
+        MODELS['LSTM'] = load_model("artifacts/current/modelo_lstm_multivariate.keras")
         print("INFO: Modelo LSTM cargado.")
     except Exception as e:
         print(f"ERROR al cargar el modelo LSTM: {e}")

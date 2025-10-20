@@ -1,0 +1,38 @@
+{
+  "rmse": 446.64940393247696,
+  "mae": 363.57005466278366,
+  "mape": 1.282458252648679,
+  "nrmse_mean": 1.6256787541689195,
+  "nrmse_range": 3.9607112169236243,
+  "baseline_previsto": {
+    "rmse": 277.93379387887376,
+    "mae": 210.13157894736835,
+    "mape": 0.7646682093316075
+  },
+  "baseline_programado": {
+    "rmse": 1893.1247434488764,
+    "mae": 1858.4186602870814,
+    "mape": 6.740076801833688
+  },
+  "baseline_persistencia": {
+    "rmse": 195.4032513086964,
+    "mae": 153.16267942583735,
+    "mape": 0.5565885243539576
+  },
+  "mode": "cold",
+  "window_days": 180,
+  "seq_len": 24,
+  "epochs": 20,
+  "n_obs_train": 1210,
+  "n_obs_val": 77,
+  "n_obs_test": 442,
+  "features": [
+    "demanda_real",
+    "demanda_prevista",
+    "demanda_programada"
+  ],
+  "targets": [
+    "demanda_real"
+  ],
+  "run_dir": "artifacts_pruebas\\run_20251017T102135Z"
+}
