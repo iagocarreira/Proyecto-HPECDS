@@ -1,0 +1,6 @@
+#Sin docker-compose.yml
+#docker build -t etl-demandas .
+#docker run --env-file .env etl-demandas
+
+#Con docker-compose.yml
+#docker compose up --build

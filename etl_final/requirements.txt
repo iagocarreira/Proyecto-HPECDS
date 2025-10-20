@@ -1,0 +1,17 @@
+# Core
+pandas>=2.2.0
+numpy>=1.26.0
+python-dateutil>=2.8.2
+
+# Base de datos
+pyodbc>=5.1.0
+
+# HTTP y API
+requests>=2.32.0
+urllib3>=2.2.2
+
+# Variables de entorno
+python-dotenv>=1.0.1
+
+# Logging avanzado (opcional, ya incluido en stdlib)
+# loguru>=0.7.2
