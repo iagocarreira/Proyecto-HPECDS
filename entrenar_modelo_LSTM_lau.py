@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Entrenamiento LSTM (corregido):
+- Split cronológico 70/15/15 → train/val/test (val para EarlyStopping; test ciego)
+- Escalado fit SOLO con train (sin leakage)
+- Baselines: Previsto, Programado y Persistencia (t-1)
+- Opción de empujar la ventana temporal a SQL (SQL_WINDOW_IN_QUERY=1)
+- Mantiene artefactos y promoción como en el script original
+- Warm start desde modelo .keras (set_weights) y comparación justa con scaler del 'current'
+"""
 
 # =========================
 # 0) IMPORTS
@@ -9,6 +18,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import math
+import random  # reproducibilidad
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -26,6 +36,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
 
+from joblib import dump, load  # dump y load de scaler
 import pyodbc  # asegúrate de tenerlo instalado
 
 # =========================
@@ -36,6 +47,23 @@ MODE = os.getenv("MODE", "warm").lower()            # "warm" semanal, "cold" men
 PROMOTE_IF_BETTER = os.getenv("PROMOTE_IF_BETTER", "1") == "1"
 ARTIFACTS_DIR = os.getenv("ARTIFACTS_DIR", "./artifacts")
 RELOAD_URL = os.getenv("RELOAD_URL", "")            # p.ej. http://localhost:5000/admin/reload
+SQL_WINDOW_IN_QUERY = os.getenv("SQL_WINDOW_IN_QUERY", "0") == "1"  # empuja WHERE a SQL
+VAL_FRAC = float(os.getenv("VAL_FRAC", "0.15"))      # parte de los datos (tras train) para validación
+EPOCHS = int(os.getenv("EPOCHS", "100"))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
+LOOK_BACK = int(os.getenv("LOOK_BACK", "24"))       # longitud de secuencia
+
+# Reproducibilidad
+SEED = int(os.getenv("SEED", "42"))
+np.random.seed(SEED); random.seed(SEED); tf.random.set_seed(SEED)
+
+# === MODO PRUEBAS controlado por env =========================
+TEST_MODE = os.getenv("TEST_MODE", "0") == "1"  # por defecto desactivado
+if TEST_MODE:
+    MODE = "cold"                 # arranque desde cero
+    PROMOTE_IF_BETTER = False     # no tocar 'current'
+    ARTIFACTS_DIR = "./artifacts_pruebas"  # sandbox de artefactos
+# =============================================================
 
 # =========================
 # 1) CONEXIÓN A LA BASE DE DATOS
@@ -54,6 +82,7 @@ engine = create_engine(ENGINE_URL, pool_pre_ping=True)
 # =========================
 # B) UTILIDADES ARTEFACTOS / PROMOCIÓN
 # =========================
+
 def _ensure_dirs():
     Path(ARTIFACTS_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -107,29 +136,41 @@ def _maybe_promote(run_dir: Path, new_metrics: dict, baseline: dict | None):
     return improved
 
 # =========================
-# 2) CARGAR Y PREPARAR DATOS
+# 2) CARGA Y PREPARACIÓN DE DATOS
 # =========================
-sql = text("""
-    SELECT
-        fecha,
-        valor_real,
-        valor_previsto,
-        valor_programado
-    FROM dbo.demanda_peninsula
-    ORDER BY fecha;
-""")
+
+# a) Lectura SQL (opcionalmente con WHERE para ventana)
+if SQL_WINDOW_IN_QUERY and WINDOW_DAYS > 0:
+    sql = text(
+        f"""
+        WITH mx AS (SELECT MAX(fecha) AS fmax FROM dbo.demanda_peninsula)
+        SELECT fecha, valor_real, valor_previsto, valor_programado
+        FROM dbo.demanda_peninsula, mx
+        WHERE fecha >= DATEADD(day, -{WINDOW_DAYS}, mx.fmax)
+        ORDER BY fecha;
+        """
+    )
+else:
+    sql = text(
+        """
+        SELECT fecha, valor_real, valor_previsto, valor_programado
+        FROM dbo.demanda_peninsula_semana
+        ORDER BY fecha;
+        """
+    )
+
 df = pd.read_sql(sql, engine, parse_dates=["fecha"]).dropna()
-df = df.set_index("fecha").sort_index()
 
-# Renombrar a tus nombres usados en el modelo
-df = df.rename(columns={
-    "valor_real": "demanda_real",
-    "valor_previsto": "demanda_prevista",
-    "valor_programado": "demanda_programada"
-})
+# b) Index/rename/sort
+df = (df.set_index("fecha").sort_index()
+        .rename(columns={
+            "valor_real": "demanda_real",
+            "valor_previsto": "demanda_prevista",
+            "valor_programado": "demanda_programada",
+        }))
 
-# --- C) Ventana deslizante (rolling) ---
-if WINDOW_DAYS > 0 and len(df) > 0:
+# c) Ventana en pandas si no se empujó a SQL
+if not SQL_WINDOW_IN_QUERY and WINDOW_DAYS > 0 and len(df) > 0:
     tmax = df.index.max()
     tmin = tmax - pd.Timedelta(days=WINDOW_DAYS)
     df = df.loc[(df.index >= tmin) & (df.index <= tmax)].copy()
@@ -137,39 +178,51 @@ if WINDOW_DAYS > 0 and len(df) > 0:
 # =========================
 # 3) SPLIT + ESCALADO (SIN LEAKAGE)
 # =========================
-features_to_scale = ["demanda_real", "demanda_prevista", "demanda_programada"]
+features = ["demanda_real", "demanda_prevista", "demanda_programada"]
 
-train_size = int(len(df) * 0.8)
-df_train = df.iloc[:train_size]
-df_test  = df.iloc[train_size:]
+n = len(df)
+if n < 100:
+    raise ValueError("Muy pocos datos para un split 70/15/15.")
 
+i_train = int(n * 0.70)
+# de lo restante, usar VAL_FRAC para validación
+rem = n - i_train
+i_val = i_train + int(rem * VAL_FRAC)
+
+# cortes cronológicos
+df_train = df.iloc[:i_train]
+df_val   = df.iloc[i_train:i_val]
+df_test  = df.iloc[i_val:]
+
+# escalado fit SOLO con train
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaler.fit(df_train[features_to_scale])                 # <-- fit SOLO con train
-train_data = scaler.transform(df_train[features_to_scale])
-test_data  = scaler.transform(df_test[features_to_scale])
+scaler.fit(df_train[features])
+
+train_data = scaler.transform(df_train[features])
+val_data   = scaler.transform(df_val[features])
+test_data  = scaler.transform(df_test[features])
 
 # =========================
 # 4) INGENIERÍA DE SECUENCIAS
 # =========================
-LOOK_BACK = 24  # 24 pasos (ajusta a tu frecuencia; p.ej. 24*5min = 2h si es cada 5 min)
 
-def create_sequences_multivariate(data, look_back):
+def create_sequences_multivariate(data: np.ndarray, look_back: int):
     X, Y = [], []
     for i in range(len(data) - look_back):
-        X.append(data[i:(i + look_back), :])   # ventana con 3 features
-        Y.append(data[i + look_back, 0])       # objetivo: demanda_real siguiente (columna 0)
+        X.append(data[i:(i + look_back), :])
+        Y.append(data[i + look_back, 0])  # objetivo: demanda_real siguiente (col 0)
     return np.array(X), np.array(Y)
 
 X_train, y_train = create_sequences_multivariate(train_data, LOOK_BACK)
-X_test, y_test = create_sequences_multivariate(test_data, LOOK_BACK)
+X_val,   y_val   = create_sequences_multivariate(val_data,   LOOK_BACK)
+X_test,  y_test  = create_sequences_multivariate(test_data,  LOOK_BACK)
 
-print(f"Forma de X_train (LSTM 3D): {X_train.shape}")
-print(f"Datos de entrenamiento: {len(y_train)} | Datos de test: {len(y_test)}")
+print(f"Formas — X_train:{X_train.shape} | X_val:{X_val.shape} | X_test:{X_test.shape}")
 
 # =========================
 # 5) MODELO LSTM
 # =========================
-print("\nDefiniendo y entrenando el modelo LSTM...")
+print("\nDefiniendo y entrenando el modelo LSTM.")
 num_features = X_train.shape[2]
 
 model = Sequential()
@@ -181,119 +234,137 @@ model.add(Dense(units=1))
 
 model.compile(optimizer='adam', loss='mean_squared_error')
 
-# --- D) Warm-start antes de entrenar ---
+# --- Warm-start antes de entrenar (desde .keras) ---
 _ensure_dirs()
 cur_dir, cur_model_p, cur_scaler_p = _current_paths()
 if MODE == "warm" and cur_model_p.exists():
     try:
-        model.load_weights(cur_model_p.as_posix())
-        print("[INFO] Warm-start: pesos previos cargados.")
+        prev_model = tf.keras.models.load_model(cur_model_p.as_posix())
+        model.set_weights(prev_model.get_weights())
+        print("[INFO] Warm-start: pesos previos cargados desde modelo .keras.")
     except Exception as e:
         print(f"[WARN] No se pudieron cargar pesos previos: {e}")
 
 history = model.fit(
     X_train, y_train,
-    epochs=100,                      # puedes reducir en warm si quieres; EarlyStopping corta solo
-    batch_size=32,
-    validation_data=(X_test, y_test),
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    validation_data=(X_val, y_val),   # ← ahora usa VALIDACIÓN, no test
     callbacks=[EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)],
-    shuffle=False,   # <-- importante en series temporales
+    shuffle=False,
     verbose=0
 )
 
 # =========================
-# 6) PREDICCIÓN Y MÉTRICAS
+# 6) PREDICCIÓN Y MÉTRICAS (en TEST ciego)
 # =========================
-y_pred_escalada = model.predict(X_test, verbose=0).flatten()
 
-# Invertir el escalado (colocando valores en la columna 0 del scaler)
-dummy_array_test = np.zeros((len(y_test), len(features_to_scale)))
-dummy_array_test[:, 0] = y_test
-y_test_original = scaler.inverse_transform(dummy_array_test)[:, 0]
+y_pred_scaled = model.predict(X_test, verbose=0).flatten()
 
-dummy_array_pred = np.zeros((len(y_pred_escalada), len(features_to_scale)))
-dummy_array_pred[:, 0] = y_pred_escalada
-y_pred_original = scaler.inverse_transform(dummy_array_pred)[:, 0]
+# Invertir escalado (col 0 = demanda_real)
+dummy_test = np.zeros((len(y_test), len(features)))
+dummy_test[:, 0] = y_test
+y_test_original = scaler.inverse_transform(dummy_test)[:, 0]
+
+dummy_pred = np.zeros((len(y_pred_scaled), len(features)))
+dummy_pred[:, 0] = y_pred_scaled
+y_pred_original = scaler.inverse_transform(dummy_pred)[:, 0]
 
 # Métricas en MW
 rmse = root_mean_squared_error(y_test_original, y_pred_original)
 mape = mean_absolute_percentage_error(y_test_original, y_pred_original) * 100
 mae  = mean_absolute_error(y_test_original, y_pred_original)
 
-# Métricas normalizadas (en %)
-nrmse_mean  = rmse / np.mean(y_test_original) * 100
-nrmse_range = rmse / (np.max(y_test_original) - np.min(y_test_original)) * 100
+# Métricas normalizadas (con guardia de rango)
+rng = float(np.max(y_test_original) - np.min(y_test_original))
+nrmse_mean  = rmse / float(np.mean(y_test_original)) * 100
+nrmse_range = (rmse / rng * 100) if rng > 0 else float("nan")
 
-print(f"\nError (RMSE) del modelo LSTM en test: {rmse:.2f} MW")
-print(f"Error (MAE)  del modelo LSTM en test: {mae:.2f} MW")
-print(f"Error (MAPE) del modelo LSTM en test: {mape:.2f}%")
-print(f"nRMSE (sobre media): {nrmse_mean:.2f}%")
-print(f"nRMSE (sobre rango): {nrmse_range:.2f}%")
+print(f"\n[LSTM TEST] RMSE={rmse:.2f} MW | MAE={mae:.2f} MW | MAPE={mape:.2f}% | nRMSE(mean)={nrmse_mean:.2f}%")
 
-# Diagnóstico de error máximo (valor y timestamp)
-indices_test = df_test.index[LOOK_BACK:]  # coherente con el nuevo split
-err = y_pred_original - y_test_original
-imax = int(np.argmax(np.abs(err)))
-if len(indices_test) > 0:
-    print(f"Error máximo: {err[imax]:.2f} MW en {indices_test[imax]}")
+# Índices de test alineados con y_test
+indices_test = df_test.index[LOOK_BACK:]
 
-# === Evaluación baseline (modelo 'current') para decidir promoción ===
-baseline = None
-if cur_model_p.exists():
+# =========================
+# 6.1 Baselines: Previsto, Programado y Persistencia
+# =========================
+
+y_real = y_test_original
+previsto   = df_test['demanda_prevista'].iloc[LOOK_BACK:].to_numpy()
+programado = df_test['demanda_programada'].iloc[LOOK_BACK:].to_numpy()
+persistence = df_test['demanda_real'].shift(1).iloc[LOOK_BACK:].to_numpy()
+
+def _metrics(name, yhat):
+    _rmse = root_mean_squared_error(y_real, yhat)
+    _mae  = mean_absolute_error(y_real, yhat)
+    _mape = mean_absolute_percentage_error(y_real, yhat) * 100
+    print(f"[{name}] RMSE={_rmse:.2f} | MAE={_mae:.2f} | MAPE={_mape:.2f}%")
+    return {"rmse": float(_rmse), "mae": float(_mae), "mape": float(_mape)}
+
+base_prev = _metrics("Previsto", previsto)
+base_prog = _metrics("Programado", programado)
+base_pers = _metrics("Persistencia t-1", persistence)
+
+# =========================
+# 6.2 Comparativa con baseline de 'current' para promoción (con su scaler)
+# =========================
+
+baseline_model_metrics = None
+if cur_model_p.exists() and cur_scaler_p.exists():
     try:
         base_m = tf.keras.models.load_model(cur_model_p.as_posix())
-        base_pred_scaled = base_m.predict(X_test, verbose=0).flatten()
-        dummy_base = np.zeros((len(base_pred_scaled), len(features_to_scale)))
+        cur_scaler = load(cur_scaler_p.as_posix())
+
+        # Transformar df_test con el scaler del modelo current
+        test_data_cur = cur_scaler.transform(df_test[features])
+        X_test_cur, _ = create_sequences_multivariate(test_data_cur, LOOK_BACK)
+
+        base_pred_scaled = base_m.predict(X_test_cur, verbose=0).flatten()
+        dummy_base = np.zeros((len(base_pred_scaled), len(features)))
         dummy_base[:, 0] = base_pred_scaled
-        base_pred_original = scaler.inverse_transform(dummy_base)[:, 0]
+        base_pred_original = cur_scaler.inverse_transform(dummy_base)[:, 0]
+
         base_rmse = root_mean_squared_error(y_test_original, base_pred_original)
         base_mape = mean_absolute_percentage_error(y_test_original, base_pred_original) * 100
-        baseline = {"rmse": float(base_rmse), "mape": float(base_mape)}
-        print(f"[BASELINE] RMSE={base_rmse:.2f} MW | MAPE={base_mape:.2f}%")
+        baseline_model_metrics = {"rmse": float(base_rmse), "mape": float(base_mape)}
+        print(f"[BASELINE MODEL current] RMSE={base_rmse:.2f} MW | MAPE={base_mape:.2f}%")
     except Exception as e:
-        print(f"[WARN] No se pudo evaluar baseline: {e}")
+        print(f"[WARN] No se pudo evaluar baseline del modelo current (posible incompatibilidad de LOOK_BACK/features): {e}")
+elif cur_model_p.exists() and not cur_scaler_p.exists():
+    print("[WARN] Modelo current encontrado pero scaler ausente; omitiendo comparación justa.")
 
 # =========================
-# 7) VISUALIZACIÓN PREDICCIÓN
+# 7) VISUALIZACIÓN PREDICCIÓN (overlay con baselines)
 # =========================
+
 resultados_test = pd.DataFrame({
-    'real': y_test_original,
-    'prediccion': y_pred_original
+    'real': y_real,
+    'pred_lstm': y_pred_original,
+    'previsto': previsto,
+    'programado': programado,
+    'persistencia': persistence,
 }, index=indices_test)
 
 plt.figure(figsize=(16, 8))
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.plot(resultados_test.index, resultados_test['real'], label='Demanda Real (MW)', linewidth=1.5)
-plt.plot(resultados_test.index, resultados_test['prediccion'], label='Predicción LSTM (MW)', linewidth=2.5, alpha=0.8)
+plt.plot(resultados_test.index, resultados_test['pred_lstm'], label='Predicción LSTM (MW)', linewidth=2.2, alpha=0.9)
+plt.plot(resultados_test.index, resultados_test['previsto'], label='Previsto', linestyle='--', alpha=0.8)
+plt.plot(resultados_test.index, resultados_test['persistencia'], label='Persistencia t-1', linestyle=':')
 plt.title(
-    f'Predicción de Demanda con LSTM | RMSE: {rmse:.2f} MW | MAE: {mae:.2f} MW | '
-    f'MAPE: {mape:.2f}% | nRMSE(media): {nrmse_mean:.2f}%',
-    fontsize=18
+    f'Predicción de Demanda | LSTM TEST RMSE: {rmse:.2f} MW | MAE: {mae:.2f} MW | '
+    f'MAPE: {mape:.2f}% | nRMSE(media): {nrmse_mean:.2f}%', fontsize=16
 )
-plt.xlabel("Fecha y Hora", fontsize=14)
-plt.ylabel("Potencia (MW)", fontsize=14)
-plt.legend(fontsize=12)
-plt.grid(True, linestyle='--', alpha=0.6)
-plt.tight_layout()
-plt.show()
+plt.xlabel("Fecha y Hora"); plt.ylabel("Potencia (MW)")
+plt.legend(); plt.tight_layout(); plt.show()
 
 # =========================
-# 8) ANOMALÍAS (híbrido σ-rodante afinado)
+# 8) ANOMALÍAS (igual que original, sobre residuo LSTM)
 # =========================
-# Parámetros
-K = 2.2                 # sensibilidad base (se recalibra si AUTO_CALIB=True)
-PCT_THRESHOLD = 0.006   # 0.6% del valor real
-FLOOR_MW = 80.0         # suelo absoluto
-EWMA_ALPHA = 0.0        # sin suavizado para no aplastar picos
-MIN_STREAK = 1          # nº mínimo de puntos consecutivos
-WIN_MIN = 180           # ~3 h
-MIN_FRAC = 0.5
-AUTO_CALIB = True
-TARGET_RATE = 0.015     # objetivo ~1.5%
-CAP_SIGMA_RATIO = 1.3   # tope frente a σ inflada
+K = 2.2; PCT_THRESHOLD = 0.006; FLOOR_MW = 80.0; EWMA_ALPHA = 0.0; MIN_STREAK = 1
+WIN_MIN = 180; MIN_FRAC = 0.5; AUTO_CALIB = True; TARGET_RATE = 0.015; CAP_SIGMA_RATIO = 1.3
 
-# 8.1 Residuos
-df_an = resultados_test.copy()
+df_an = resultados_test[["real", "pred_lstm"]].rename(columns={"pred_lstm":"prediccion"}).copy()
 df_an["residuos"] = df_an["real"] - df_an["prediccion"]
 df_an["res_smooth"] = df_an["residuos"] if EWMA_ALPHA == 0 else df_an["residuos"].ewm(alpha=EWMA_ALPHA, adjust=False).mean()
 
@@ -304,9 +375,8 @@ def _infer_window_points(index, minutes=WIN_MIN, min_frac=MIN_FRAC):
     except Exception:
         freq = None
     if not freq:
-        delta = (pd.Series(index).diff().median()
-                 if len(index) >= 2 else pd.Timedelta(minutes=5))
-        if pd.isna(delta): 
+        delta = (pd.Series(index).diff().median() if len(index) >= 2 else pd.Timedelta(minutes=5))
+        if pd.isna(delta):
             delta = pd.Timedelta(minutes=5)
     else:
         delta = pd.to_timedelta(freq)
@@ -317,16 +387,14 @@ def _infer_window_points(index, minutes=WIN_MIN, min_frac=MIN_FRAC):
 
 win, min_per = _infer_window_points(df_an.index)
 
-# 8.2 σ rodante con warm-up suave + robusto MAD + CAP
+# σ rodante + robusto MAD + CAP
 res_s = df_an["res_smooth"].shift(1)
 sigma_roll = res_s.rolling(win, min_periods=min_per).std()
-sigma_exp  = res_s.expanding(min_periods=max(10, min_per//2)).std()  # warm-up
+sigma_exp  = res_s.expanding(min_periods=max(10, min_per//2)).std()
 sigma_loc  = sigma_roll.fillna(sigma_exp)
-
 mad_loc = (res_s.rolling(win, min_periods=min_per)
            .apply(lambda s: np.median(np.abs(s - np.median(s))), raw=False))
 sigma_robusta = 1.4826 * mad_loc
-
 sigma_eff = sigma_loc.copy()
 sigma_eff = np.where(
     (pd.isna(sigma_eff)) | (sigma_eff > CAP_SIGMA_RATIO * sigma_robusta),
@@ -335,7 +403,7 @@ sigma_eff = np.where(
 )
 sigma_eff = pd.Series(sigma_eff, index=df_an.index).replace(0, np.nan)
 
-# 8.3 Umbral híbrido y auto-calibración
+# Umbral híbrido y auto-calibración
 umbral_sigma = K * sigma_eff
 umbral_pct   = PCT_THRESHOLD * df_an["real"].abs()
 umbral_abs   = pd.Series(FLOOR_MW, index=df_an.index)
@@ -348,7 +416,7 @@ if AUTO_CALIB:
         umbral_sigma = K * sigma_eff
         df_an["umbral_MW"] = pd.concat([umbral_sigma, umbral_pct, umbral_abs], axis=1).max(axis=1)
 
-# 8.4 Etiquetado (con streak opcional)
+# Etiquetado
 is_anom_point = (df_an["res_smooth"].abs() > df_an["umbral_MW"].fillna(np.inf))
 if MIN_STREAK > 1:
     streak = (is_anom_point.groupby((~is_anom_point).cumsum())
@@ -358,14 +426,10 @@ else:
     is_anom = is_anom_point
 df_an["anomalia"] = is_anom.astype(int)
 
-# 8.5 Resumen
 n = len(df_an); n_anom = int(df_an["anomalia"].sum())
-print("\n=== Anomalías (híbrido σ-rodante afinado) ===")
-print(f"Ventana≈{win} pts | K≈{K:.2f} | PCT={PCT_THRESHOLD*100:.2f}% | FLOOR={FLOOR_MW} MW")
-print(f"Filas: {n} | Anómalos: {n_anom} ({100*n_anom/n:.2f}%)")
-print("pct |res| > umbral:", float((df_an['residuos'].abs() > df_an['umbral_MW']).mean()*100), "%")
+print("\n=== Anomalías (híbrido σ-rodante) ===")
+print(f"Filas: {n} | Anómalos: {n_anom} ({100*n_anom/n:.2f}%) | K≈{K:.2f}")
 
-# 8.6 Visualización
 plt.figure(figsize=(16,8))
 plt.style.use('seaborn-v0_8-whitegrid')
 plt.plot(df_an.index, df_an["real"], label='Demanda Real (MW)', linewidth=1.5)
@@ -377,10 +441,9 @@ plt.fill_between(df_an.index,
 if n_anom > 0:
     pts = df_an[df_an["anomalia"]==1]
     plt.scatter(pts.index, pts["real"], s=70, zorder=5, label="Anomalía")
-plt.title(f"Detección de Anomalías con LSTM | híbrido σ-rodante (K≈{K:.2f}) | RMSE: {rmse:.2f} MW", fontsize=16)
+plt.title(f"Detección de Anomalías con LSTM | RMSE test: {rmse:.2f} MW", fontsize=14)
 plt.xlabel("Fecha y Hora"); plt.ylabel("Potencia (MW)")
-plt.legend(fontsize=12); plt.grid(True, linestyle='--', alpha=0.6)
-plt.tight_layout(); plt.show()
+plt.legend(); plt.tight_layout(); plt.show()
 
 # =========================
 # 9) GUARDAR ARTEFACTOS VERSIONADOS + PROMOCIÓN
@@ -394,7 +457,6 @@ run_dir.mkdir(parents=True, exist_ok=True)
 model.save((run_dir / "modelo_lstm_multivariate.keras").as_posix())
 
 # Guardar el scaler
-from joblib import dump
 dump(scaler, run_dir / "scaler_lstm_multivariate.joblib")
 
 # Guardar métricas y anomalías
@@ -404,17 +466,21 @@ metrics_out = {
     "mape": float(mape),
     "nrmse_mean": float(nrmse_mean),
     "nrmse_range": float(nrmse_range),
-    "baseline_rmse": float(baseline["rmse"]) if baseline else None,
-    "baseline_mape": float(baseline["mape"]) if baseline else None,
+    "baseline_previsto": base_prev,
+    "baseline_programado": base_prog,
+    "baseline_persistencia": base_pers,
     "mode": MODE,
     "window_days": WINDOW_DAYS,
     "seq_len": LOOK_BACK,
-    "epochs": int(len(history.history.get("loss", []))),  # aprox. efectivas
+    "epochs": int(len(history.history.get("loss", []))),  # efectivas
     "n_obs_train": int(len(df_train)),
+    "n_obs_val": int(len(df_val)),
     "n_obs_test": int(len(df_test)),
-    "features": features_to_scale,
+    "features": features,
     "targets": ["demanda_real"],
     "run_dir": str(run_dir),
+    "seed": SEED,
+    "test_mode": TEST_MODE,
 }
 with open(run_dir / "metrics.json", "w", encoding="utf-8") as f:
     json.dump(metrics_out, f, ensure_ascii=False, indent=2)
@@ -425,7 +491,7 @@ df_an.to_csv(run_dir / "anomalies.csv", index=True)
 print(json.dumps(metrics_out, ensure_ascii=False))
 
 # Promoción condicionada (+ recarga API opcional)
-_promoted = _maybe_promote(run_dir, {"rmse": float(rmse), "mape": float(mape)}, baseline)
+_promoted = _maybe_promote(run_dir, {"rmse": float(rmse), "mape": float(mape)}, baseline_model_metrics)
 if _promoted:
     print(f"[INFO] Modelo PROMOCIONADO: {run_dir.name}")
 
@@ -467,73 +533,13 @@ def predict_next_step(model, scaler, df_full, look_back=LOOK_BACK):
     dummy = np.zeros((1, len(feats))); dummy[0, 0] = y_scaled  # desescalar como en test
     y_pred = scaler.inverse_transform(dummy)[0, 0]
 
-    # timestamp objetivo = último índice + frecuencia inferida
     off = _infer_freq(df_full.index)
     t_next = df_full.index[-1] + off
     return t_next, float(y_pred)
 
-# --- OPCIONAL: si quieres predecir t+1 usando covariables en t (con fallback) ---
-def weekly_seasonal_fill(hist_series: pd.Series, t, k_weeks=4):
-    """Media últimas k semanas para (dow, hora, minuto); plan B: media últimos 28 días por hora."""
-    s = hist_series.dropna().copy()
-    if s.empty:
-        return float("nan")
-    dfh = s.to_frame("v")
-    dfh["dow"] = dfh.index.dayofweek
-    dfh["hod"] = dfh.index.hour
-    dfh["min"] = dfh.index.minute
-    mask = (dfh.index < t) & (dfh.index >= t - pd.Timedelta(weeks=k_weeks)) \
-           & (dfh["dow"] == t.dayofweek) & (dfh["hod"] == t.hour) & (dfh["min"] == t.minute)
-    vals = dfh.loc[mask, "v"]
-    if len(vals):
-        return float(vals.mean())
-    mask2 = (dfh.index < t) & (dfh["hod"] == t.hour) & (dfh["min"] == t.minute)
-    vals2 = dfh.loc[mask2].tail(28)["v"]
-    return float(vals2.mean()) if len(vals2) else float(dfh["v"].iloc[-1])
-
-def predict_t_plus1_with_fallback(model, scaler, df_full, look_back=LOOK_BACK):
-    """
-    Predice y[t+1] usando la ventana que termina en t (requiere covariables en t).
-    Si faltan 'demanda_prevista'/'demanda_programada' en t, las imputa con estacionalidad semanal.
-    """
-    df_full = df_full.sort_index()
-    if len(df_full) < look_back + 1:
-        raise ValueError("No hay suficientes filas para construir la ventana.")
-    feats = ["demanda_real","demanda_prevista","demanda_programada"]
-
-    # t = último índice disponible
-    t = df_full.index[-1]
-    row_t = df_full.iloc[-1].copy()
-    if pd.isna(row_t["demanda_prevista"]):
-        row_t["demanda_prevista"] = weekly_seasonal_fill(df_full["demanda_prevista"], t)
-    if pd.isna(row_t["demanda_programada"]):
-        row_t["demanda_programada"] = weekly_seasonal_fill(df_full["demanda_programada"], t)
-
-    # ventana: (t-look_back+1 ... t)
-    tail = df_full.iloc[-look_back-1:-1].copy()
-    tail.loc[t] = row_t  # garantizamos covariables en t
-    X_win = tail[feats].values[-look_back:, :]
-
-    X_scaled = scaler.transform(X_win)
-    X_scaled = np.expand_dims(X_scaled, axis=0)
-    y_scaled = model.predict(X_scaled, verbose=0).flatten()[0]
-    dummy = np.zeros((1, len(feats))); dummy[0, 0] = y_scaled
-    y_pred = scaler.inverse_transform(dummy)[0, 0]
-
-    # objetivo de esta ventana es t+1
-    off = _infer_freq(df_full.index)
-    t_next = t + off
-    return t_next, float(y_pred)
-
-# ------- Ejecución de ejemplo (elige el modo que prefieras) -------
+# Ejemplo de inferencia (atrapado para no romper si faltan deps)
 try:
-    # One-step-ahead (coherente con el entrenamiento): no necesita exógenas futuras
     t_pred, y_hat = predict_next_step(model, scaler, df, look_back=LOOK_BACK)
     print(f"[INFERENCIA] Predicción one-step-ahead para {t_pred}: {y_hat:.2f} MW")
-
-    # Si quieres forzar usar covariables “de ahora” y prever el siguiente:
-    # t_pred2, y_hat2 = predict_t_plus1_with_fallback(model, scaler, df, look_back=LOOK_BACK)
-    # print(f"[INFERENCIA] Predicción (t+1 con fallback) para {t_pred2}: {y_hat2:.2f} MW")
-
 except Exception as e:
     print(f"[WARN] No se pudo ejecutar la inferencia: {e}")
