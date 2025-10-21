@@ -1,0 +1,1 @@
+<iframe title="visualizacion_demanda_modelo_etl" width="1140" height="541.25" src="https://app.powerbi.com/reportEmbed?reportId=8f045d94-7f0e-40ba-ac40-4be67259d2ac&autoAuth=true&ctid=cea1ea3e-60b2-4f75-a6c2-a6022e8f961b" frameborder="0" allowFullScreen="true"></iframe>
