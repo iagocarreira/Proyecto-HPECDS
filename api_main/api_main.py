@@ -191,6 +191,12 @@ def predict_custom():
     
     # Pasamos la fecha a la plantilla para que se muestre en el título
     return render_template("plot_view.html", model='LSTM', img_data=img_base64, date=prediction_date)
+
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5001)
 
