@@ -35,15 +35,15 @@
             justify-content: center; text-align: center; padding: 0 50px; 
             width: 100%;
         }
-        h1 { font-size: 3em; /* Título un poco más pequeño para dar espacio */ font-weight: 300; line-height: 1.1; margin-bottom: 5px; letter-spacing: 2px; }
+        h1 { font-size: 3em; font-weight: 300; line-height: 1.1; margin-bottom: 5px; letter-spacing: 2px; }
         .tagline { font-size: 1.2em; font-weight: 400; margin-bottom: 40px; }
         
-        /* Contenedor de 2 Columnas */
+        /* ¡CORREGIDO! Contenedor de 2 Columnas */
         .prediction-grid {
-            display: flex;
+            display: flex; /* Vuelve a flex */
             gap: 30px;
             margin-top: 20px;
-            max-width: 1100px; /* Hacemos el contenedor más ancho */
+            max-width: 1100px;
             width: 90%;
             justify-content: center;
         }
@@ -53,13 +53,13 @@
             background-color: rgba(255, 255, 255, 0.15);
             backdrop-filter: blur(8px); 
             border-radius: 10px; 
-            padding: 40px 30px; /* Más padding interno para hacerlo más grande */
-            flex: 1; 
+            padding: 40px 30px;
+            flex: 1; /* Ambas cajas ocupan el mismo espacio */
             border: 1px solid rgba(255, 255, 255, 0.3);
-            min-height: 250px; /* Aseguramos una altura mínima */
+            min-height: 250px;
             display: flex;
             flex-direction: column;
-            justify-content: space-between; /* Distribuye el contenido verticalmente */
+            justify-content: space-between;
         }
         .action-box h2 { font-size: 1.4em; font-weight: 500; margin-top: 0; margin-bottom: 25px; }
         
@@ -72,13 +72,10 @@
         }
         .button { text-decoration: none; color: white; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         .button-lstm { background-color: #008000; }
-        .button-lgbm { background-color: #ff8c00; }
-        .button-data { background-color: #007bff; }
         .button:hover, button:hover { transform: translateY(-3px); box-shadow: 0 6px 12px rgba(0,0,0,0.4); }
         
         input[type="date"], select { color: #333; background-color: white; }
         
-        /* Ajuste específico para el botón del formulario */
         .submit-button-container { margin-top: 20px; }
         
     </style>
@@ -89,9 +86,10 @@
     <header>
         <a href="/" class="logo">GREEN ENERGY INSIGHTS</a>
         <nav>
-            <a href="{{ api_data_url }}" target="_blank">Visualización de Datos</a>
+            <a href="/dashboard" class="api-button" style="background-color: #6a0dad; margin-right: 15px;">Dashboard</a>
             
-            <a href="#">Documentación</a>
+            <a href="{{ api_data_url }}" target="_blank">Visualización de Datos</a>
+            <a href="/documentacion">Documentación</a>
             <a href="{{ api_data_url }}/docs" target="_blank" class="api-button">API Docs</a>
         </nav>
     </header>
@@ -104,15 +102,15 @@
             
             <div class="action-box">
                 <div>
-                    <h2>Predecir un Día Específico Pasado</h2>
-                    <p style="font-weight: 300; margin-bottom: 25px;">Seleccione la fecha para la que desea generar el pronóstico.</p>
+                    <h2>Predecir un Día Específico</h2>
+                    <p style="font-weight: 300; margin-bottom: 25px;">Seleccione la fecha para generar el pronóstico y analizar sus anomalías.</p>
                 </div>
                 
                 <form action="/predict_custom" method="POST" class="form-group">
                     <input type="date" name="desde_fecha" required>
-                    <input type="hidden" name="hasta_fecha" value="{{ '9999-12-31' }}"> <input type="hidden" name="model_select" value="LSTM"> <div class="submit-button-container">
+                    <div class="submit-button-container" style="margin-top: 15px;">
                         <button type="submit" class="button button-lstm">
-                            Predecir
+                            Predecir y Analizar
                         </button>
                     </div>
                 </form>
@@ -122,7 +120,7 @@
                 <div>
                     <h2>Predicción a Futuro</h2>
                     <p style="font-weight: 300; margin-bottom: 25px;">
-                        Pronóstico a 24 horas basado en los datos más recientes.
+                        Pronóstico a 24 horas basado en los datos más recientes (pre-calculado).
                     </p>
                 </div>
                 <div class="form-group">

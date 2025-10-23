@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentación del Proyecto</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap');
+        
+        body { 
+            font-family: 'Roboto', sans-serif; 
+            margin: 0; padding: 20px; 
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start; 
+            min-height: 100vh;
+            background-image: url("{{ url_for('static', filename='background_plot.jpg') }}");
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            color: #333;
+        }
+        
+        .container { 
+            background-color: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(5px);
+            padding: 30px 40px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+            max-width: 95%;
+            width: 900px;
+            box-sizing: border-box;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        h2 { 
+            color: #0056b3; 
+            margin-top: 0; 
+            margin-bottom: 25px; 
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        h3 {
+            color: #333;
+            font-weight: 700;
+            margin-top: 30px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .back-button { 
+            display: inline-block; 
+            margin-bottom: 25px; 
+            text-decoration: none; 
+            padding: 10px 18px; 
+            background-color: #555; 
+            color: white; 
+            border-radius: 5px; 
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .back-button:hover { 
+            transform: translateY(-2px); 
+            background-color: #007bff; 
+        }
+
+        p, li { 
+            color: #444; 
+            line-height: 1.7; 
+            font-size: 1.05em;
+            font-weight: 300; /* Texto más ligero para mejor lectura */
+        }
+        
+        ul { 
+            padding-left: 25px; 
+            list-style-type: disc; /* Estilo de viñeta */
+        }
+        
+        li {
+            margin-bottom: 10px; /* Espacio entre elementos de la lista */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-button">← Volver al Panel de Control</a>
+        
+        [cite_start]<h2>GreenEnergy Insights: Un Portal Inteligente para la Energía [cite: 3, 4]</h2>
+
+        <h3>Resumen del Proyecto</h3>
+        <p>
+            [cite_start]"GreenEnergy Insights" es una plataforma de análisis predictivo diseñada para abordar el desafío del creciente consumo energético en los Centros de Procesamiento de Datos (CPDs)[cite: 19, 21]. [cite_start]El objetivo principal es evolucionar de una gestión energética reactiva a una estrategia predictiva [cite: 23][cite_start], permitiendo anticipar fluctuaciones en la red eléctrica y responder a ellas antes de que impacten la operación[cite: 24].
+        </p>
+
+        <h3>Arquitectura Técnica</h3>
+        <p>
+            El proyecto se ha implementado siguiendo una arquitectura de microservicios, donde cada componente es responsable de una tarea específica:
+        </p>
+
+        <ul>
+            <li>
+                [cite_start]<strong>Ingesta de Datos (ETL):</strong> Un proceso automatizado extrae continuamente datos de la API de Red Eléctrica de España (ESIOS)[cite: 53]. [cite_start]Estos datos son transformados y cargados en una base de datos Azure SQL[cite: 61, 78], utilizando un sistema de tablas "caliente" (para datos recientes) y "fría" (para el histórico).
+            </li>
+            <li>
+                [cite_start]<strong>Motor de Analítica (IA):</strong> Un script de entrenamiento utiliza los datos históricos para entrenar un modelo de Deep Learning (LSTM)[cite: 34, 54]. [cite_start]Este modelo es capaz de predecir la demanda energética a corto plazo y detectar anomalías[cite: 55]. El modelo se versiona y se "promociona" automáticamente a producción si sus métricas (RMSE, MAPE) superan a la versión anterior.
+            </li>
+            <li>
+                [cite_start]<strong>Portal de Visualización (Esta web):</strong> Esta aplicación (desarrollada en Flask) carga el modelo promocionado y proporciona una interfaz web interactiva[cite: 38]. [cite_start]Permite a los usuarios generar predicciones futuras, comparar predicciones pasadas con datos reales y analizar las anomalías detectadas[cite: 56].
+            </li>
+            <li>
+                [cite_start]<strong>API de Datos (FastAPI):</strong> Un servicio independiente de alto rendimiento expone una API REST [cite: 58] que permite a otros sistemas (como el Dashboard o el Chatbot) consultar los datos históricos de la base de datos de forma eficiente.
+            </li>
+            <li>
+                [cite_start]<strong>Dashboard y Asistente:</strong> El proyecto se complementa con un dashboard de KPIs (Power BI) [cite: 39] [cite_start]y un futuro asistente conversacional (Chatbot) [cite: 41, 59] para consultar las predicciones en lenguaje natural.
+            </li>
+        </ul>
+    </div>
+</body>
+</html>

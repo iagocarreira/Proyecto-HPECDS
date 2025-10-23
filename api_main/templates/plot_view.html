@@ -10,28 +10,27 @@
         body { 
             font-family: 'Roboto', sans-serif; 
             margin: 0; padding: 20px; 
-            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start; 
             min-height: 100vh;
-            
-            /* ===== NUEVO FONDO CON IMAGEN ===== */
             background-image: url("{{ url_for('static', filename='background_plot.jpg') }}");
-            background-size: cover;      /* Asegura que la imagen cubra todo el fondo */
-            background-position: center; /* Centra la imagen */
-            background-attachment: fixed;/* Fija la imagen para que no se mueva con el scroll */
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+            color: #333;
         }
         
-        .plot-container { 
-            /* ===== ESTILO MEJORADO DEL CONTENEDOR ===== */
-            background-color: rgba(255, 255, 255, 0.98); /* Un blanco ligeramente translúcido */
-            backdrop-filter: blur(5px);                  /* Efecto "cristal" para navegadores compatibles */
+        .container { 
+            background-color: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(5px);
             padding: 30px;
-            border-radius: 15px;                         /* Bordes más redondeados */
-            box-shadow: 0 10px 30px rgba(0,0,0,0.25);    /* Sombra más pronunciada */
+            margin-top: 20px; /* Margen superior */
+            margin-bottom: 20px; /* Margen inferior */
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
             max-width: 95%;
             width: 1100px;
             box-sizing: border-box;
-            position: relative;
-            border: 1px solid rgba(255, 255, 255, 0.2); /* Un borde sutil que captura la luz */
+            border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
         h2 { 
@@ -67,13 +66,44 @@
             border-radius: 6px;
         }
 
-        p {
-            color: #666;
+        p { color: #666; line-height: 1.6; }
+        strong { color: #000; }
+
+        /* --- ¡NUEVO! Estilos para la tabla de Anomalías --- */
+        .results-summary {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 30px; /* Espacio después de la imagen */
+            margin-bottom: 20px;
+            border-left: 5px solid #007bff;
         }
+
+        .anomaly-list {
+            list-style: none;
+            padding: 0;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        .anomaly-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        .anomaly-item:nth-child(even) { background-color: #f9f9f9; }
+        .anomaly-item:last-child { border-bottom: none; }
+        
+        .anomaly-item span { font-size: 0.95em; }
+        .anomaly-item .ts { font-weight: 600; color: #d9534f; }
+        .anomaly-item .val { min-width: 100px; text-align: right; }
     </style>
 </head>
 <body>
-    <div class="plot-container">
+    <div class="container">
         <a href="/" class="back-button">← Volver al Panel de Control</a>
         
         {% if error %}
@@ -81,10 +111,47 @@
             <p>{{ error }}</p>
         {% else %}
             <h2>Resultados de Predicción (Modelo {{ model }})</h2>
-            
-            <p>Mostrando predicción para el día: <strong>{{ date if date else 'Últimos datos disponibles' }}</strong></p>
-
+            <p>Mostrando predicción para: <strong>{{ date if date else 'Últimos datos disponibles' }}</strong></p>
             <img src="data:image/png;base64,{{ img_data }}" alt="Gráfica de Predicción">
+
+            {% if anomaly_results and 'error' not in anomaly_results %}
+                <div class="results-summary">
+                    {% if anomaly_results.anomalies | length > 0 %}
+                        <p>
+                            <strong>¡Se encontraron {{ anomaly_results.anomalies | length }} anomalías!</strong><br>
+                            Análisis basado en Z-score con umbral de <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>.
+                            (Media del residuo: {{ "%.2f"|format(anomaly_results.mu) }} MW, Desv. Estándar: {{ "%.2f"|format(anomaly_results.sd) }} MW)
+                        </p>
+                    {% else %}
+                        <p>
+                            <strong>No se encontraron anomalías significativas</strong> para esta fecha 
+                            con un umbral de Z-score de <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>.
+                        </p>
+                    {% endif %}
+                </div>
+
+                {% if anomaly_results.anomalies | length > 0 %}
+                <ul class="anomaly-list">
+                    <li class="anomaly-item" style="background: #333; color: white;">
+                        <span style="font-weight: 700;">Timestamp (Fecha y Hora)</span>
+                        <span style="font-weight: 700;" class="val">Residuo (MW)</span>
+                        <span style="font-weight: 700;" class="val">Z-Score</span>
+                    </li>
+                    {% for anom in anomaly_results.anomalies %}
+                    <li class="anomaly-item">
+                        <span class="ts">{{ anom.ts | replace('T', ' ') }}</span>
+                        <span class="val">{{ "%.2f"|format(anom.residual) }}</span>
+                        <span class="val" style="font-weight: bold;">{{ "%.2f"|format(anom.z) }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            {% elif anomaly_results and anomaly_results.error %}
+                <div class="results-summary" style="border-left-color: #dc3545;">
+                    <p><strong>Error al calcular anomalías:</strong> {{ anomaly_results.error }}</p>
+                </div>
+            {% endif %}
+
         {% endif %}
     </div>
 </body>
