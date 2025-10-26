@@ -10,26 +10,44 @@ API Principal (Flask) v5
 """
 
 import os
-import io
-import pandas as pd
-import numpy as np
-from flask import jsonify
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
-# Configurar el backend de Matplotlib
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import base64
 from datetime import datetime, timedelta
+from pathlib import Path
+from dotenv import load_dotenv
 
-from flask import Flask, request, render_template
+# ---------- Base dir del fichero (no del CWD) ----------
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent  # Raíz del proyecto (un nivel arriba)
 
-# Importaciones de Modelado y BD
-from sqlalchemy import create_engine, MetaData, Table, select, and_
-from tensorflow.keras.models import load_model
-import joblib
+# Cargar .env desde la raíz del proyecto
+load_dotenv(PROJECT_ROOT / ".env")
 
-# --- CONFIGURACIÓN GLOBAL Y PARÁMETROS CRÍTICOS ---
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import numpy as np
+
+def _resolve_path(p: str) -> Path:
+    """Si p es relativo, lo resuelve respecto a la RAÍZ del proyecto."""
+    pp = Path(p)
+    return (pp if pp.is_absolute() else (PROJECT_ROOT / pp)).resolve()
+
+# ----------------- Config -----------------
+MODEL_PATH  = os.getenv("MODEL_PATH",  "artifacts/current/modelo_lstm_multivariate.keras")
+SCALER_PATH = os.getenv("SCALER_PATH", "artifacts/current/scaler_lstm_multivariate.joblib")
+
+# Resuelve a rutas absolutas robustas:
+MODEL_PATH  = _resolve_path(MODEL_PATH)
+SCALER_PATH = _resolve_path(SCALER_PATH)
+
+print("[CWD]           ", Path.cwd())
+print("[BASE_DIR]      ", BASE_DIR)
+print("[PROJECT_ROOT]  ", PROJECT_ROOT)
+print("[MODEL_PATH abs]", MODEL_PATH)
+print("[SCALER_PATH abs]", SCALER_PATH)
+
+# ... resto del código sin cambios ...
+
 app = Flask(__name__)
 
 MODELS = {}
