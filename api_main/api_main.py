@@ -1,20 +1,41 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-API Principal (Flask) v5
-- Compatible con modelo v2 (x_scaler, y_scaler).
-- Cache de "warm-up" para la predicción "latest".
-- Integración de anomalías en la vista de predicción.
-- ¡NUEVO! Corregidas advertencias de Pandas (FutureWarning) y
-  Sklearn (UserWarning) mediante renombrado temporal.
+API Principal (Flask) v5 - MERGED
+- Compatible con modelo v2 (x_scaler, y_scaler) [Iago]
+- Cache de "warm-up" para la predicción "latest" [Iago]
+- Integración de anomalías en la vista de predicción [Iago]
+- Corregidas advertencias de Pandas (FutureWarning) y Sklearn (UserWarning) [Iago]
+- Endpoints API para chatbot [Tu código]
+- Configuración de rutas con Path y .env [Tu código]
+- (NUEVO) Unión semanal + histórica para consultas y predicción
+- (NUEVO) Endpoint /api/anomalies_range para rangos largos
 """
 
 import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
-from datetime import datetime, timedelta
+import io
+import pandas as pd
+import numpy as np
+from flask import jsonify
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Configurar el backend de Matplotlib
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import base64
+from datetime import datetime, timedelta
+
+from flask import Flask, request, render_template
+from flask_cors import CORS
+
+# Importaciones de Modelado y BD
+from sqlalchemy import create_engine, MetaData, Table, select, and_
+from tensorflow.keras.models import load_model
+import joblib
 
 # ---------- Base dir del fichero (no del CWD) ----------
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,32 +44,14 @@ PROJECT_ROOT = BASE_DIR.parent  # Raíz del proyecto (un nivel arriba)
 # Cargar .env desde la raíz del proyecto
 load_dotenv(PROJECT_ROOT / ".env")
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import numpy as np
-
 def _resolve_path(p: str) -> Path:
     """Si p es relativo, lo resuelve respecto a la RAÍZ del proyecto."""
     pp = Path(p)
     return (pp if pp.is_absolute() else (PROJECT_ROOT / pp)).resolve()
 
-# ----------------- Config -----------------
-MODEL_PATH  = os.getenv("MODEL_PATH",  "artifacts/current/modelo_lstm_multivariate.keras")
-SCALER_PATH = os.getenv("SCALER_PATH", "artifacts/current/scaler_lstm_multivariate.joblib")
-
-# Resuelve a rutas absolutas robustas:
-MODEL_PATH  = _resolve_path(MODEL_PATH)
-SCALER_PATH = _resolve_path(SCALER_PATH)
-
-print("[CWD]           ", Path.cwd())
-print("[BASE_DIR]      ", BASE_DIR)
-print("[PROJECT_ROOT]  ", PROJECT_ROOT)
-print("[MODEL_PATH abs]", MODEL_PATH)
-print("[SCALER_PATH abs]", SCALER_PATH)
-
-# ... resto del código sin cambios ...
-
+# --- CONFIGURACIÓN GLOBAL Y PARÁMETROS CRÍTICOS ---
 app = Flask(__name__)
+CORS(app)  # Para el chatbot
 
 MODELS = {}
 X_SCALER, Y_SCALER = None, None
@@ -56,6 +59,22 @@ LOOK_BACK = int(os.getenv("LOOK_BACK", "24"))
 NUM_FEATURES = 3 # real, previsto, programado
 PREDICTION_STEPS = 288 # 24h * 12 (intervalos de 5 min)
 PREDICTION_DATA_WINDOW_DAYS, API_DATA_URL = 3, "http://127.0.0.1:5002"
+
+# Configuración de rutas (tu código)
+MODEL_PATH = os.getenv("MODEL_PATH", "artifacts/current/model.keras")
+X_SCALER_PATH = os.getenv("X_SCALER_PATH", "artifacts/current/x_scaler.joblib")
+Y_SCALER_PATH = os.getenv("Y_SCALER_PATH", "artifacts/current/y_scaler.joblib")
+
+MODEL_PATH = _resolve_path(MODEL_PATH)
+X_SCALER_PATH = _resolve_path(X_SCALER_PATH)
+Y_SCALER_PATH = _resolve_path(Y_SCALER_PATH)
+
+print("[CWD]           ", Path.cwd())
+print("[BASE_DIR]      ", BASE_DIR)
+print("[PROJECT_ROOT]  ", PROJECT_ROOT)
+print("[MODEL_PATH abs]", MODEL_PATH)
+print("[X_SCALER_PATH abs]", X_SCALER_PATH)
+print("[Y_SCALER_PATH abs]", Y_SCALER_PATH)
 
 LATEST_PRED_CACHE = {
     "data_json": None,
@@ -66,7 +85,7 @@ LATEST_PRED_CACHE = {
 
 # --- Conexión a Azure SQL ---
 SERVER, DATABASE, USER, PASSWORD = "udcserver2025.database.windows.net", "grupo_1", "ugrupo1", "HK9WXIJaBp2Q97haePdY"
-ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes")
+ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes")
 engine, tabla_semanal, tabla_historica = None, None, None
 try:
     engine = create_engine(ENGINE_URL, pool_pre_ping=True)
@@ -78,7 +97,7 @@ except Exception as e:
     print(f"ERROR CRÍTICO: No se pudo conectar a la base de datos. {e}")
 
 
-# --- Utilidades de inferencia ---
+# --- Utilidades de inferencia (Iago) ---
 
 def _infer_freq(index: pd.DatetimeIndex):
     try:
@@ -114,7 +133,7 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
     step = _step_minutes(hist.index)
     if step == 0: step = 5
 
-    # --- ¡NUEVO! Mapa de renombrado para el scaler ---
+    # --- Mapa de renombrado para el scaler (Iago) ---
     RENAME_MAP_SCALER = {
         "valor_real": "demanda_real",
         "valor_previsto": "demanda_prevista",
@@ -128,11 +147,9 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
             if f not in win.columns:
                 win[f] = 0.0
         
-        # --- ¡CORREGIDO! Renombrar temporalmente antes de escalar ---
+        # --- Renombrar temporalmente antes de escalar (Iago) ---
         win_renamed = win.rename(columns=RENAME_MAP_SCALER)
-        # Usar .feature_names_in_ para asegurar el orden correcto que espera el scaler
         X = x_scaler.transform(win_renamed[x_scaler.feature_names_in_])
-        # --- Fin de la corrección de Sklearn ---
         
         X = np.expand_dims(X, axis=0)
 
@@ -143,7 +160,6 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
         t_next = cur_hist.index[-1] + pd.Timedelta(minutes=step)
         preds.append((t_next, y_next))
 
-        # Los keys aquí ('valor_real', etc.) deben coincidir con 'feats'
         row_data = {
             "valor_real": y_next,
             "valor_previsto": win.iloc[-1]["valor_previsto"],
@@ -160,30 +176,25 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
                 row_data["valor_previsto"] = 0.0
                 row_data["valor_programado"] = 0.0
         
-        # --- ¡CORREGIDO! Usar pd.concat para evitar FutureWarning ---
+        # --- Usar pd.concat para evitar FutureWarning (Iago) ---
         new_df_row = pd.DataFrame(row_data, index=[t_next])
         cur_hist = pd.concat([cur_hist, new_df_row])
-        # --- Fin de la corrección de Pandas ---
 
     return pd.Series([v for _, v in preds], index=[t for t, _ in preds], name="forecast")
 
-# --- Carga de Modelos v2 ---
+# --- Carga de Modelos v2 (Iago con tus rutas) ---
 def load_models_at_startup():
     global MODELS, X_SCALER, Y_SCALER
     try:
-        X_SCALER = joblib.load("artifacts/current/x_scaler.joblib")
-        Y_SCALER = joblib.load("artifacts/current/y_scaler.joblib")
+        X_SCALER = joblib.load(X_SCALER_PATH)
+        Y_SCALER = joblib.load(Y_SCALER_PATH)
         print("INFO: Scalers X/Y cargados correctamente.")
     except Exception as e:
         print(f"ERROR CRÍTICO al cargar scalers (x_scaler/y_scaler): {e}")
     
     try:
-        model_path = "artifacts/current/model.keras"
-        if not os.path.exists(model_path):
-            model_path = "artifacts/current/modelo_lstm_multivariate.keras"
-        
-        MODELS['LSTM'] = load_model(model_path)
-        print(f"INFO: Modelo LSTM cargado desde {model_path}.")
+        MODELS['LSTM'] = load_model(MODEL_PATH)
+        print(f"INFO: Modelo LSTM cargado desde {MODEL_PATH}.")
     except Exception as e:
         print(f"ERROR al cargar el modelo LSTM: {e}")
 
@@ -203,8 +214,29 @@ def fetch_data_from_db(table_to_query: Table, start_date: datetime, end_date: da
         print(f"ERROR al consultar '{table_to_query.name}': {e}")
         return pd.DataFrame()
 
+# --- NUEVO: unión semanal + histórica, priorizando semanal en solapes ---
+def fetch_data_union(start_date: datetime, end_date: datetime) -> pd.DataFrame:
+    """
+    Devuelve datos combinando semanal + histórica, priorizando semanal cuando hay solapes.
+    """
+    if (tabla_semanal is None) and (tabla_historica is None):
+        return pd.DataFrame()
 
-# --- Lógica de predicción ---
+    df_w = fetch_data_from_db(tabla_semanal, start_date, end_date) if tabla_semanal is not None else pd.DataFrame()
+    df_h = fetch_data_from_db(tabla_historica, start_date, end_date) if tabla_historica is not None else pd.DataFrame()
+
+    if df_w.empty and df_h.empty:
+        return pd.DataFrame()
+    if df_w.empty:
+        return df_h
+    if df_h.empty:
+        return df_w
+
+    combined = df_w.combine_first(df_h)
+    combined = combined.sort_index()
+    return combined
+
+# --- Lógica de predicción (Iago) ---
 def generate_prediction_series(target_date: str | None = None):
     
     if 'LSTM' not in MODELS:
@@ -225,30 +257,32 @@ def generate_prediction_series(target_date: str | None = None):
             # MODO 1: Predecir un día específico (pasado)
             prediction_day_start = datetime.strptime(target_date, "%Y-%m-%d")
             prediction_start_time = prediction_day_start
-            seven_days_ago = datetime.now() - timedelta(days=7)
-            table_to_use = tabla_semanal if prediction_day_start.date() >= seven_days_ago.date() else tabla_historica
-            if table_to_use is None: return None, None, "Error: Conexión a BD no disponible."
 
             end_history = prediction_day_start - timedelta(microseconds=1)
             start_history = end_history - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
-            df_history = fetch_data_from_db(table_to_use, start_history, end_history)
-            
             end_prediction_day = prediction_day_start + timedelta(days=1) - timedelta(microseconds=1)
-            df_future_covariates = fetch_data_from_db(table_to_use, prediction_day_start, end_prediction_day)
-            
-            if len(df_future_covariates) < PREDICTION_STEPS:
-                print(f"WARN: Faltan datos de 'previsto'/'programado' para el día {target_date}. Se obtuvieron {len(df_future_covariates)}.")
-            
+
+            # Usa ambas tablas unificadas (prioriza semanal)
+            df_history = fetch_data_union(start_history, end_history)
+            df_future_covariates = fetch_data_union(prediction_day_start, end_prediction_day)
+
+            if df_future_covariates.empty:
+                return None, None, f"No hay datos de 'previsto/programado' para {target_date}."
+
+            if df_history.empty or len(df_history) < LOOK_BACK:
+                return None, None, f"Histórico insuficiente para {target_date}. Necesitas ~{LOOK_BACK} puntos previos."
+
             df_actuals_for_plot = df_future_covariates.copy()
         
         else:
             # MODO 2: Predecir "a partir de ahora"
-            table_to_use = tabla_semanal
             end_dt, start_dt = datetime.now(), datetime.now() - timedelta(days=PREDICTION_DATA_WINDOW_DAYS)
-            df_history = fetch_data_from_db(table_to_use, start_dt, end_dt)
+
+            # Historia reciente uniendo ambas tablas
+            df_history = fetch_data_union(start_dt, end_dt)
             
             if df_history.empty:
-                return None, None, "No se encontraron datos históricos recientes en la tabla semanal."
+                return None, None, "No se encontraron datos históricos recientes."
             if len(df_history) < LOOK_BACK:
                 return None, None, f"Datos históricos insuficientes ({len(df_history)}). Se necesitan {LOOK_BACK}."
             
@@ -257,12 +291,13 @@ def generate_prediction_series(target_date: str | None = None):
             prediction_start_time = df_history.index[-1] + freq_obj
             df_actuals_for_plot = df_history.copy()
             
+            # Futuros de respaldo: mismo tramo hace 1 año, usando la unión
             start_proxy = prediction_start_time - timedelta(days=365)
             end_proxy = start_proxy + timedelta(minutes=PREDICTION_STEPS * _step_minutes(df_history.index))
-            df_proxy_futures = fetch_data_from_db(tabla_historica, start_proxy, end_proxy)
+            df_proxy_futures = fetch_data_union(start_proxy, end_proxy)
             
             if len(df_proxy_futures) < PREDICTION_STEPS:
-                return None, None, "No se encontraron datos de 'previsto'/'programado' para hoy, y tampoco hay datos de respaldo de hace un año."
+                return None, None, "No hay datos de 'previsto/programado' suficientes para construir los próximos 5 min × 24h."
             
             proxy_index = pd.date_range(start=prediction_start_time, periods=len(df_proxy_futures), freq=freq_obj)
             df_proxy_futures.index = proxy_index
@@ -271,8 +306,8 @@ def generate_prediction_series(target_date: str | None = None):
         if df_history.empty:
             return None, None, "df_history está vacío, no se puede predecir."
         
-        df_history[features] = df_history[features].fillna(method='ffill').fillna(0)
-        df_future_covariates[features] = df_future_covariates[features].fillna(method='ffill').fillna(0)
+        df_history[features] = df_history[features].ffill().fillna(0)
+        df_future_covariates[features] = df_future_covariates[features].ffill().fillna(0)
         
         predictions_series = forecast_multi_step(
             MODELS['LSTM'], X_SCALER, Y_SCALER,
@@ -292,8 +327,7 @@ def generate_prediction_series(target_date: str | None = None):
         traceback.print_exc()
         return None, None, f"Error interno durante la predicción: {e}"
 
-
-# --- Función de ploteo ---
+# --- Función de ploteo (Iago) ---
 def generate_prediction_plot_image(predictions_series, df_actuals, target_date: str = None):
     try:
         plt.figure(figsize=(14, 7)); plt.style.use('seaborn-v0_8-whitegrid')
@@ -329,7 +363,7 @@ def generate_prediction_plot_image(predictions_series, df_actuals, target_date: 
         print(f"Error generando plot: {e}")
         return None, f"Error al generar la imagen: {e}"
 
-# --- Helper para Anomalías ---
+# --- Helper para Anomalías (Iago) ---
 def _get_anomaly_results(predictions_series, df_actuals, thresh=2.5):
     if df_actuals is None or 'valor_real' not in df_actuals.columns:
         return {"anomalies": [], "error": "No hay datos reales para analizar."}
@@ -363,7 +397,7 @@ def _get_anomaly_results(predictions_series, df_actuals, thresh=2.5):
     return {"mu": mu, "sd": sd, "threshold": thresh, "anomalies": anomalies}
 
 
-# --- Función de "Warm-Up" ---
+# --- Función de "Warm-Up" (Iago) ---
 def warm_up_prediction_cache():
     global LATEST_PRED_CACHE
     print("INFO: [WARM-UP] Iniciando predicción de 'últimos datos'...")
@@ -459,7 +493,7 @@ def documentation():
 def health_check():
     return jsonify({"status": "ok"}), 200
 
-# --- ENDPOINTS (API) ---
+# --- ENDPOINTS (API) para chatbot ---
 
 @app.get("/api/predictions_latest")
 def api_predictions_latest():
@@ -524,14 +558,200 @@ def api_anomalies_for_date():
     date = request.args.get("date")
     thresh = float(request.args.get("z_threshold", 2.5))
     
+    # Si no hay fecha, obtener última fecha disponible
+    if not date:
+        try:
+            if tabla_semanal is not None:
+                with engine.connect() as conn:
+                    query = select(tabla_semanal.c.fecha).order_by(tabla_semanal.c.fecha.desc()).limit(1)
+                    result = conn.execute(query).fetchone()
+                    if result:
+                        latest_date = result[0]
+                        date = latest_date.strftime("%Y-%m-%d")
+                        print(f"INFO: Usando última fecha disponible para anomalías: {date}")
+        except Exception as e:
+            print(f"ERROR obteniendo última fecha: {e}")
+            return jsonify({"error": "No se pudo determinar la fecha de referencia"}), 400
+    
     predictions_series, df_actuals, err = generate_prediction_series(target_date=date)
-    if err: return jsonify({"error": err}), 400
+    if err: 
+        return jsonify({"error": err}), 400
     
     results = _get_anomaly_results(predictions_series, df_actuals, thresh)
+    
+    # Enriquecer con valores reales y predichos
+    if "anomalies" in results and df_actuals is not None:
+        for anom in results["anomalies"]:
+            ts = pd.Timestamp(anom["ts"])
+            if ts in df_actuals.index and "valor_real" in df_actuals.columns:
+                anom["real_mw"] = float(df_actuals.loc[ts, "valor_real"])
+            if ts in predictions_series.index:
+                anom["pred_mw"] = float(predictions_series.loc[ts])
+    
     if "error" in results:
         return jsonify(results), 400
-    return jsonify(results)
+    
+    # Formato esperado por el chatbot
+    return jsonify({
+        "mu": results.get("mu"),
+        "sd": results.get("sd"),
+        "threshold": results.get("threshold"),
+        "items": results.get("anomalies", [])
+    })
 
+# --- NUEVO: anomalías en rango (todo histórico si quieres) ---
+@app.get("/api/anomalies_range")
+def api_anomalies_range():
+    """
+    Detecta anomalías en un rango de fechas [start, end] (ambos YYYY-MM-DD).
+    Si no se especifica end, usa start. Devuelve lista agregada de anomalías.
+    Advertencia: puede tardar si el rango es muy grande.
+    """
+    start = request.args.get("start")
+    end = request.args.get("end")
+    thresh = float(request.args.get("z_threshold", 2.5))
+
+    if not start:
+        return jsonify({"error": "Parámetro 'start' es requerido (YYYY-MM-DD)."}), 400
+
+    try:
+        start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+        end_dt = datetime.strptime(end, "%Y-%m-%d").date() if end else start_dt
+        if end_dt < start_dt:
+            return jsonify({"error": "end < start"}), 400
+    except Exception:
+        return jsonify({"error": "Formato de fecha inválido. Usa YYYY-MM-DD"}), 400
+
+    all_items = []
+    total_days = (end_dt - start_dt).days + 1
+
+    for i in range(total_days):
+        day = (start_dt + timedelta(days=i)).strftime("%Y-%m-%d")
+        predictions_series, df_actuals, err = generate_prediction_series(target_date=day)
+        if err:
+            # Continúa, pero anota el error del día
+            all_items.append({"date": day, "error": err})
+            continue
+
+        results = _get_anomaly_results(predictions_series, df_actuals, thresh)
+
+        # Enriquecer y añadir
+        for anom in results.get("anomalies", []):
+            ts = pd.Timestamp(anom["ts"])
+            if ts in df_actuals.index and "valor_real" in df_actuals.columns:
+                anom["real_mw"] = float(df_actuals.loc[ts, "valor_real"])
+            if ts in predictions_series.index:
+                anom["pred_mw"] = float(predictions_series.loc[ts])
+            anom["date"] = day
+            all_items.append(anom)
+
+    out = {
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
+        "z_threshold": thresh,
+        "total_items": len(all_items),
+        "items": all_items[:500]  # protección por tamaño
+    }
+    if len(all_items) > 500:
+        out["truncated"] = True
+
+    return jsonify(out)
+
+@app.get("/api/series")
+def api_series():
+    """
+    Endpoint para consultar series históricas de demanda.
+    Parámetros:
+    - metric: tipo de métrica (demanda, prediccion, programado)
+    - start: fecha/hora de inicio (ISO8601 o YYYY-MM-DD) - OBLIGATORIO
+    - end: fecha/hora fin (opcional)
+    - agg: agregación temporal (5min, 15min, hour, day)
+    """
+    metric = request.args.get("metric", "demanda")
+    start = request.args.get("start")
+    end = request.args.get("end")
+    agg = request.args.get("agg", "5min")
+    
+    if not start:
+        return jsonify({"error": "Parámetro 'start' requerido"}), 400
+    
+    try:
+        # Parsear fechas
+        start_dt = pd.to_datetime(start)
+        
+        # Si no hay end, usar el mismo día
+        if end:
+            end_dt = pd.to_datetime(end)
+        else:
+            # Si solo especificó fecha, buscar todo el día
+            if len(start) == 10:  # formato YYYY-MM-DD
+                end_dt = start_dt + timedelta(days=1) - timedelta(microseconds=1)
+            else:
+                end_dt = start_dt  # Punto específico
+        
+        # Unifica semanal + histórica
+        df = fetch_data_union(start_dt, end_dt)
+        
+        # Si sigue vacío, devolver error amigable
+        if df.empty:
+            date_range_str = f"{start_dt.date()}" if start_dt.date() == end_dt.date() else f"{start_dt.date()} a {end_dt.date()}"
+            return jsonify({
+                "error": f"No hay datos disponibles para {date_range_str}",
+                "info": "Verifica que la fecha solicitada exista en la base de datos.",
+                "points": []
+            }), 404
+        
+        # Determinar columna según métrica
+        if metric == "demanda":
+            column = "valor_real"
+        elif metric == "prediccion":
+            column = "valor_previsto"
+        elif metric == "programado":
+            column = "valor_programado"
+        else:
+            return jsonify({"error": f"Métrica desconocida: {metric}"}), 400
+        
+        if column not in df.columns:
+            return jsonify({"error": f"Columna {column} no encontrada"}), 404
+        
+        # Aplicar agregación si se solicita
+        if agg and agg != "5min":
+            agg_map = {"15min": "15min", "hour": "1H", "day": "1D"}
+            if agg in agg_map:
+                df = df.resample(agg_map[agg]).mean()
+        
+        # Detectar si es consulta de punto único (hora específica)
+        is_time_specific = len(start) > 10 and "T" in start
+        single_point = is_time_specific and (not end or start == end)
+        
+        # Preparar respuesta
+        points = [
+            {"ts": idx.isoformat(), "value": float(val) if not pd.isna(val) else None}
+            for idx, val in df[column].items()
+        ]
+        
+        # Si es punto único y hay múltiples registros, buscar el más cercano
+        if single_point and len(points) > 1:
+            target_time = pd.to_datetime(start)
+            closest_idx = min(range(len(df)), key=lambda i: abs(df.index[i] - target_time))
+            points = [points[closest_idx]]
+        
+        result = {
+            "metric": metric,
+            "start": start,
+            "end": end or start,
+            "agg": agg,
+            "points": points,
+            "single_point": single_point
+        }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"ERROR en /api/series: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Error interno: {e}"}), 500
 
 # --- Bloque final ---
 if __name__ == "__main__":
