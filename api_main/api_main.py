@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-API Principal (Flask) v5
-- Compatible con modelo v2 (x_scaler, y_scaler).
-- Cache de "warm-up" para la predicción "latest".
-- Integración de anomalías en la vista de predicción.
-- ¡NUEVO! Corregidas advertencias de Pandas (FutureWarning) y
-  Sklearn (UserWarning) mediante renombrado temporal.
-"""
 
 import os
 import io
@@ -96,7 +86,7 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
     step = _step_minutes(hist.index)
     if step == 0: step = 5
 
-    # --- ¡NUEVO! Mapa de renombrado para el scaler ---
+    
     RENAME_MAP_SCALER = {
         "valor_real": "demanda_real",
         "valor_previsto": "demanda_prevista",
@@ -110,12 +100,9 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
             if f not in win.columns:
                 win[f] = 0.0
         
-        # --- ¡CORREGIDO! Renombrar temporalmente antes de escalar ---
+       
         win_renamed = win.rename(columns=RENAME_MAP_SCALER)
-        # Usar .feature_names_in_ para asegurar el orden correcto que espera el scaler
         X = x_scaler.transform(win_renamed[x_scaler.feature_names_in_])
-        # --- Fin de la corrección de Sklearn ---
-        
         X = np.expand_dims(X, axis=0)
 
         y_scaled = float(model.predict(X, verbose=0).flatten()[0])
@@ -125,7 +112,7 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
         t_next = cur_hist.index[-1] + pd.Timedelta(minutes=step)
         preds.append((t_next, y_next))
 
-        # Los keys aquí ('valor_real', etc.) deben coincidir con 'feats'
+        
         row_data = {
             "valor_real": y_next,
             "valor_previsto": win.iloc[-1]["valor_previsto"],
@@ -142,14 +129,13 @@ def forecast_multi_step(model, x_scaler, y_scaler, df_hist, look_back, horizon_s
                 row_data["valor_previsto"] = 0.0
                 row_data["valor_programado"] = 0.0
         
-        # --- ¡CORREGIDO! Usar pd.concat para evitar FutureWarning ---
         new_df_row = pd.DataFrame(row_data, index=[t_next])
         cur_hist = pd.concat([cur_hist, new_df_row])
-        # --- Fin de la corrección de Pandas ---
+        
 
     return pd.Series([v for _, v in preds], index=[t for t, _ in preds], name="forecast")
 
-# --- Carga de Modelos v2 ---
+
 def load_models_at_startup():
     global MODELS, X_SCALER, Y_SCALER
     try:
@@ -169,7 +155,7 @@ def load_models_at_startup():
     except Exception as e:
         print(f"ERROR al cargar el modelo LSTM: {e}")
 
-# --- fetch_data_from_db ---
+
 def fetch_data_from_db(table_to_query: Table, start_date: datetime, end_date: datetime) -> pd.DataFrame:
     if not engine or table_to_query is None: return pd.DataFrame()
     query = select(table_to_query).where(and_(table_to_query.c.fecha >= start_date, table_to_query.c.fecha <= end_date)).order_by(table_to_query.c.fecha)
@@ -436,6 +422,10 @@ def dashboard():
 @app.route("/documentacion")
 def documentation():
     return render_template("documentacion.html")
+
+@app.route("/chatbot")
+def chatbot_page():
+    return render_template("chatbot.html")
 
 @app.route("/health")
 def health_check():

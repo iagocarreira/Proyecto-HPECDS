@@ -71,16 +71,45 @@
             color: #444; 
             line-height: 1.7; 
             font-size: 1.05em;
-            font-weight: 300; /* Texto más ligero para mejor lectura */
+            font-weight: 300;
         }
         
-        ul { 
-            padding-left: 25px; 
-            list-style-type: disc; /* Estilo de viñeta */
+        /* --- Nueva Estructura de Tarjetas --- */
+        .grid-container {
+            display: grid;
+            grid-template-columns: 1fr; /* 1 columna por defecto */
+            gap: 20px;
+            margin-top: 25px;
         }
-        
-        li {
-            margin-bottom: 10px; /* Espacio entre elementos de la lista */
+
+        .card {
+            background-color: #f9f9f9;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            border: 1px solid #eee;
+            border-left: 5px solid #007bff;
+        }
+        .card h4 {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #0056b3;
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
+        .card p {
+            font-size: 1em;
+            line-height: 1.6;
+        }
+
+        /* Responsive para 2 columnas en pantallas anchas */
+        @media (min-width: 768px) {
+            .grid-container {
+                grid-template-columns: 1fr 1fr;
+            }
+            .card.full-width {
+                grid-column: 1 / -1; /* Ocupa todo el ancho */
+            }
         }
     </style>
 </head>
@@ -100,23 +129,31 @@
             El proyecto se ha implementado siguiendo una arquitectura de microservicios, donde cada componente es responsable de una tarea específica:
         </p>
 
-        <ul>
-            <li>
-                [cite_start]<strong>Ingesta de Datos (ETL):</strong> Un proceso automatizado extrae continuamente datos de la API de Red Eléctrica de España (ESIOS)[cite: 53]. [cite_start]Estos datos son transformados y cargados en una base de datos Azure SQL[cite: 61, 78], utilizando un sistema de tablas "caliente" (para datos recientes) y "fría" (para el histórico).
-            </li>
-            <li>
-                [cite_start]<strong>Motor de Analítica (IA):</strong> Un script de entrenamiento utiliza los datos históricos para entrenar un modelo de Deep Learning (LSTM)[cite: 34, 54]. [cite_start]Este modelo es capaz de predecir la demanda energética a corto plazo y detectar anomalías[cite: 55]. El modelo se versiona y se "promociona" automáticamente a producción si sus métricas (RMSE, MAPE) superan a la versión anterior.
-            </li>
-            <li>
-                [cite_start]<strong>Portal de Visualización (Esta web):</strong> Esta aplicación (desarrollada en Flask) carga el modelo promocionado y proporciona una interfaz web interactiva[cite: 38]. [cite_start]Permite a los usuarios generar predicciones futuras, comparar predicciones pasadas con datos reales y analizar las anomalías detectadas[cite: 56].
-            </li>
-            <li>
-                [cite_start]<strong>API de Datos (FastAPI):</strong> Un servicio independiente de alto rendimiento expone una API REST [cite: 58] que permite a otros sistemas (como el Dashboard o el Chatbot) consultar los datos históricos de la base de datos de forma eficiente.
-            </li>
-            <li>
-                [cite_start]<strong>Dashboard y Asistente:</strong> El proyecto se complementa con un dashboard de KPIs (Power BI) [cite: 39] [cite_start]y un futuro asistente conversacional (Chatbot) [cite: 41, 59] para consultar las predicciones en lenguaje natural.
-            </li>
-        </ul>
+        <div class="grid-container">
+            <div class="card">
+                <h4>📦 Ingesta de Datos (ETL)</h4>
+                [cite_start]<p>Un proceso automatizado extrae continuamente datos de la API de Red Eléctrica de España (ESIOS)[cite: 53]. [cite_start]Estos datos son transformados y cargados en una base de datos Azure SQL[cite: 61, 78], utilizando un sistema de tablas "caliente" (para datos recientes) y "fría" (para el histórico).</p>
+            </div>
+            
+            <div class="card">
+                <h4>🧠 Motor de Analítica (IA)</h4>
+                [cite_start]<p>Un script de entrenamiento utiliza los datos históricos para entrenar un modelo de Deep Learning (LSTM)[cite: 34, 54]. [cite_start]Este modelo es capaz de predecir la demanda energética a corto plazo y detectar anomalías[cite: 55]. El modelo se versiona y se "promociona" automáticamente a producción si sus métricas (RMSE, MAPE) superan a la versión anterior.</p>
+            </div>
+
+            <div class="card full-width"> <h4>🖥️ Portal de Visualización (Esta web)</h4>
+                [cite_start]<p>Esta aplicación (desarrollada en Flask) carga el modelo promocionado y proporciona una interfaz web interactiva[cite: 38]. [cite_start]Permite a los usuarios generar predicciones futuras, comparar predicciones pasadas con datos reales y analizar las anomalías detectadas[cite: 56].</p>
+            </div>
+            
+            <div class="card">
+                <h4>📡 API de Datos (FastAPI)</h4>
+                [cite_start]<p>Un servicio independiente de alto rendimiento expone una API REST [cite: 58] que permite a otros sistemas (como el Dashboard o el Chatbot) consultar los datos históricos de la base de datos de forma eficiente.</p>
+            </div>
+            
+            <div class="card">
+                <h4>📊 Dashboard y Asistente 🤖</h4>
+                [cite_start]<p>El proyecto se complementa con un dashboard de KPIs (Power BI) [cite: 39] [cite_start]y un asistente conversacional (Chatbot) [cite: 41, 59] para consultar las predicciones en lenguaje natural.</p>
+            </div>
+        </div>
     </div>
 </body>
 </html>
