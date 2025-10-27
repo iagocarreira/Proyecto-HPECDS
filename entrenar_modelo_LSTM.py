@@ -26,6 +26,7 @@ import math
 import random
 import numpy as np
 import pandas as pd
+import time
 
 # Matplotlib no interactivo (para servidores)
 import matplotlib
@@ -264,6 +265,7 @@ if MODE == "warm":
 
 cb = EarlyStopping(monitor="val_loss", patience=PATIENCE, restore_best_weights=True)
 print("\nDefiniendo y entrenando el modelo LSTM.")
+t0 = time.time()
 hist = model.fit(
     X_train, y_train,
     validation_data=(X_val, y_val),
@@ -271,7 +273,8 @@ hist = model.fit(
     callbacks=[cb],
     verbose=VERBOSE
 )
-
+train_time_s = time.time() - t0
+print(f"[INFO] Tiempo de entrenamiento: {train_time_s:.2f} s")
 # =========================
 # Evaluación (TEST) + métricas
 # =========================
@@ -658,3 +661,43 @@ if ENABLE_MULTISTEP:
         print(f"[ERROR] Multi-step: {e}")
 else:
     print("[FORECAST] Desactivado por ENABLE_MULTISTEP=0")
+
+# =========================
+# Guardar métricas en BD (solo columnas principales)
+# =========================
+def save_metrics_db(engine, df_an, rmse, mae, mape, nrmse_mean, train_time_s):
+    n_anomalias = int(df_an["anomalia"].sum())
+    pct_anomalias = float(n_anomalias / len(df_an) * 100) if len(df_an) > 0 else 0
+
+    query = text("""
+        INSERT INTO metricas_lstm (
+            fecha_ejecucion, rmse, mae, mape, nrmse_mean,
+            n_anomalias, pct_anomalias, tiempo_entrenamiento_s
+        )
+        VALUES (
+            GETDATE(), :rmse, :mae, :mape, :nrmse_mean,
+            :n_anomalias, :pct_anomalias, :tiempo_entrenamiento_s
+        )
+    """)
+
+    with engine.begin() as conn:
+        conn.execute(query, {
+            "rmse": float(rmse),
+            "mae": float(mae),
+            "mape": float(mape),
+            "nrmse_mean": float(nrmse_mean),
+            "n_anomalias": n_anomalias,
+            "pct_anomalias": pct_anomalias,
+            "tiempo_entrenamiento_s": float(train_time_s)
+        })
+
+    print("[SQL] Métricas guardadas correctamente en metricas_lstm.")
+
+# Guardar métricas en la BD
+save_metrics_db(
+    engine,
+    df_an,
+    rmse, mae, mape, nrmse_mean,
+    train_time_s
+)
+
