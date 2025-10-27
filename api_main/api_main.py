@@ -38,7 +38,7 @@ LATEST_PRED_CACHE = {
 
 # --- Conexión a Azure SQL ---
 SERVER, DATABASE, USER, PASSWORD = "udcserver2025.database.windows.net", "grupo_1", "ugrupo1", "HK9WXIJaBp2Q97haePdY"
-ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes")
+ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes")
 engine, tabla_semanal, tabla_historica = None, None, None
 try:
     engine = create_engine(ENGINE_URL, pool_pre_ping=True)

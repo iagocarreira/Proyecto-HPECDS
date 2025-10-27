@@ -4,3 +4,4 @@ modelo_demanda_lgbm.txt
 modelo_lstm_multivariate.keras
 scaler_lstm_multivariate.joblib
 \__pycache__
+llm-orchestrator/.env
