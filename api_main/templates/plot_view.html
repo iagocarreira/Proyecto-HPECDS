@@ -69,7 +69,7 @@
         p { color: #666; line-height: 1.6; }
         strong { color: #000; }
 
-        /* --- ¡NUEVO! Estilos para la tabla de Anomalías --- */
+    
         .results-summary {
             background-color: #f4f4f4;
             padding: 15px;
@@ -119,13 +119,13 @@
                     {% if anomaly_results.anomalies | length > 0 %}
                         <p>
                             <strong>¡Se encontraron {{ anomaly_results.anomalies | length }} anomalías!</strong><br>
-                            Análisis basado en Z-score con umbral de <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>.
-                            (Media del residuo: {{ "%.2f"|format(anomaly_results.mu) }} MW, Desv. Estándar: {{ "%.2f"|format(anomaly_results.sd) }} MW)
+                            Análisis basado en <strong>Umbral Híbrido Robusto</strong> (Multiplicador K: <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>).
+                            (Mediana del residuo: {{ "%.2f"|format(anomaly_results.mu) }} MW, Desv. Robusta (MAD): {{ "%.2f"|format(anomaly_results.sd) }} MW)
                         </p>
                     {% else %}
                         <p>
                             <strong>No se encontraron anomalías significativas</strong> para esta fecha 
-                            con un umbral de Z-score de <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>.
+                            con un umbral híbrido (K: <strong>{{ "%.1f"|format(anomaly_results.threshold) }}</strong>).
                         </p>
                     {% endif %}
                 </div>
@@ -135,7 +135,7 @@
                     <li class="anomaly-item" style="background: #333; color: white;">
                         <span style="font-weight: 700;">Timestamp (Fecha y Hora)</span>
                         <span style="font-weight: 700;" class="val">Residuo (MW)</span>
-                        <span style="font-weight: 700;" class="val">Z-Score</span>
+                        <span style="font-weight: 700;" class="val">Z-Score (Robusto)</span>
                     </li>
                     {% for anom in anomaly_results.anomalies %}
                     <li class="anomaly-item">

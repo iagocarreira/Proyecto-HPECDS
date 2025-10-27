@@ -117,11 +117,11 @@
     <div class="container">
         <a href="/" class="back-button">← Volver al Panel de Control</a>
         
-        [cite_start]<h2>GreenEnergy Insights: Un Portal Inteligente para la Energía [cite: 3, 4]</h2>
+        <h2>GreenEnergy Insights: Un Portal Inteligente para la Energía </h2>
 
         <h3>Resumen del Proyecto</h3>
         <p>
-            [cite_start]"GreenEnergy Insights" es una plataforma de análisis predictivo diseñada para abordar el desafío del creciente consumo energético en los Centros de Procesamiento de Datos (CPDs)[cite: 19, 21]. [cite_start]El objetivo principal es evolucionar de una gestión energética reactiva a una estrategia predictiva [cite: 23][cite_start], permitiendo anticipar fluctuaciones en la red eléctrica y responder a ellas antes de que impacten la operación[cite: 24].
+            "GreenEnergy Insights" es una plataforma de análisis predictivo diseñada para abordar el desafío del creciente consumo energético.
         </p>
 
         <h3>Arquitectura Técnica</h3>
@@ -132,26 +132,26 @@
         <div class="grid-container">
             <div class="card">
                 <h4>📦 Ingesta de Datos (ETL)</h4>
-                [cite_start]<p>Un proceso automatizado extrae continuamente datos de la API de Red Eléctrica de España (ESIOS)[cite: 53]. [cite_start]Estos datos son transformados y cargados en una base de datos Azure SQL[cite: 61, 78], utilizando un sistema de tablas "caliente" (para datos recientes) y "fría" (para el histórico).</p>
+                <p>Un proceso automatizado extrae continuamente datos de la API de Red Eléctrica de España (ESIOS). Estos datos son transformados y cargados en una base de datos Azure SQL, utilizando un sistema de tablas "caliente" (para datos recientes) y "fría" (para el histórico).</p>
             </div>
             
             <div class="card">
                 <h4>🧠 Motor de Analítica (IA)</h4>
-                [cite_start]<p>Un script de entrenamiento utiliza los datos históricos para entrenar un modelo de Deep Learning (LSTM)[cite: 34, 54]. [cite_start]Este modelo es capaz de predecir la demanda energética a corto plazo y detectar anomalías[cite: 55]. El modelo se versiona y se "promociona" automáticamente a producción si sus métricas (RMSE, MAPE) superan a la versión anterior.</p>
+                <p>Un script de entrenamiento utiliza los datos históricos para entrenar un modelo de Deep Learning (LSTM). Este modelo es capaz de predecir la demanda energética a corto plazo y detectar anomalías. El modelo se versiona y se "promociona" automáticamente a producción si sus métricas (RMSE, MAPE) superan a la versión anterior.</p>
             </div>
 
             <div class="card full-width"> <h4>🖥️ Portal de Visualización (Esta web)</h4>
-                [cite_start]<p>Esta aplicación (desarrollada en Flask) carga el modelo promocionado y proporciona una interfaz web interactiva[cite: 38]. [cite_start]Permite a los usuarios generar predicciones futuras, comparar predicciones pasadas con datos reales y analizar las anomalías detectadas[cite: 56].</p>
+                <p>Esta aplicación (desarrollada en Flask) carga el modelo promocionado y proporciona una interfaz web interactiva. Permite a los usuarios generar predicciones futuras, comparar predicciones pasadas con datos reales y analizar las anomalías detectadas.</p>
             </div>
             
             <div class="card">
                 <h4>📡 API de Datos (FastAPI)</h4>
-                [cite_start]<p>Un servicio independiente de alto rendimiento expone una API REST [cite: 58] que permite a otros sistemas (como el Dashboard o el Chatbot) consultar los datos históricos de la base de datos de forma eficiente.</p>
+                <p>Un servicio independiente de alto rendimiento expone una API REST  que permite a otros sistemas (como el Dashboard o el Chatbot) consultar los datos históricos de la base de datos de forma eficiente.</p>
             </div>
             
             <div class="card">
                 <h4>📊 Dashboard y Asistente 🤖</h4>
-                [cite_start]<p>El proyecto se complementa con un dashboard de KPIs (Power BI) [cite: 39] [cite_start]y un asistente conversacional (Chatbot) [cite: 41, 59] para consultar las predicciones en lenguaje natural.</p>
+                <p>El proyecto se complementa con un dashboard de KPIs (Power BI) y un asistente conversacional (Chatbot)  para consultar las predicciones en lenguaje natural.</p>
             </div>
         </div>
     </div>

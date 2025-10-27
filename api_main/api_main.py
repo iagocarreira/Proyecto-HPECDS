@@ -18,7 +18,7 @@ from flask import Flask, request, render_template
 from sqlalchemy import create_engine, MetaData, Table, select, and_
 from tensorflow.keras.models import load_model
 import joblib
-
+import math
 # --- CONFIGURACIÓN GLOBAL Y PARÁMETROS CRÍTICOS ---
 app = Flask(__name__)
 
@@ -36,9 +36,16 @@ LATEST_PRED_CACHE = {
     "error": "Cache no inicializado."
 }
 
+EWMA_ALPHA = float(os.getenv("ANOM_EWMA_ALPHA", "0.10"))  # suaviza residuo
+WIN_MIN = int(os.getenv("ANOM_WIN_MIN", "1440"))      # ~24h
+MIN_FRAC = float(os.getenv("ANOM_MIN_FRAC", "0.8"))
+PCT_THRESHOLD = float(os.getenv("ANOM_PCT", "0.015"))
+FLOOR_MW = float(os.getenv("ANOM_FLOOR", "300.0"))
+ANOM_CHECK_EVERY_MIN = int(os.getenv("ANOM_CHECK_EVERY_MIN", "15"))
+
 # --- Conexión a Azure SQL ---
 SERVER, DATABASE, USER, PASSWORD = "udcserver2025.database.windows.net", "grupo_1", "ugrupo1", "HK9WXIJaBp2Q97haePdY"
-ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes")
+ENGINE_URL = (f"mssql+pyodbc://{USER}:{PASSWORD}@{SERVER}:1433/{DATABASE}?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=no&TrustServerCertificate=yes")
 engine, tabla_semanal, tabla_historica = None, None, None
 try:
     engine = create_engine(ENGINE_URL, pool_pre_ping=True)
@@ -170,6 +177,51 @@ def fetch_data_from_db(table_to_query: Table, start_date: datetime, end_date: da
     except Exception as e:
         print(f"ERROR al consultar '{table_to_query.name}': {e}")
         return pd.DataFrame()
+    
+def _infer_window_points(index: pd.DatetimeIndex, minutes=WIN_MIN, min_frac=MIN_FRAC):
+    """ Calcula el tamaño de la ventana en puntos basado en minutos. """
+    if len(index) < 3:
+        return 12, 6
+    try:
+        step = pd.Series(index).diff().median()
+    except Exception:
+        step = pd.Timedelta(minutes=5)
+    if pd.isna(step):
+        step = pd.Timedelta(minutes=5)
+    
+    step_min = max(1, int(step.total_seconds() // 60))
+    win = max(12, int(math.ceil(minutes / step_min)))
+    min_periods = max(6, int(math.ceil(win * min_frac)))
+    return win, min_periods
+
+# Pega esto en api_main.py (o ml_utils.py), reemplazando la función antigua
+
+def _calculate_hybrid_thresholds(df_an: pd.DataFrame, K: float):
+   
+    res_s = df_an["residuo"].ewm(alpha=EWMA_ALPHA, adjust=False).mean().shift(1)
+    
+    mad_scalar = (res_s - res_s.median()).abs().median()
+
+    sigma_rob_scalar = 1.4826 * mad_scalar
+
+    if not pd.notna(sigma_rob_scalar) or sigma_rob_scalar < 0.1:
+        
+        sigma_rob_scalar = df_an["residuo"].std()
+        if not pd.notna(sigma_rob_scalar) or sigma_rob_scalar < 0.1:
+            sigma_rob_scalar = 1.0 
+    
+    
+    sigma_rob = pd.Series(sigma_rob_scalar, index=df_an.index)
+
+    u_sigma = K * sigma_rob  
+    u_pct = PCT_THRESHOLD * df_an["real"].abs() 
+    u_abs = pd.Series(FLOOR_MW, index=df_an.index) 
+    
+    umbral = pd.concat([u_sigma, u_pct, u_abs], axis=1).max(axis=1)
+    
+    step_min = _step_minutes(df_an.index)
+    
+    return umbral, sigma_rob, step_min
 
 
 # --- Lógica de predicción ---
@@ -299,6 +351,11 @@ def generate_prediction_plot_image(predictions_series, df_actuals, target_date: 
 
 # --- Helper para Anomalías ---
 def _get_anomaly_results(predictions_series, df_actuals, thresh=2.5):
+    """
+    Detecta anomalías usando la lógica robusta (MAD, Umbral Híbrido, Submuestreo)
+    del script de entrenamiento.
+    'thresh' se usa como el multiplicador K.
+    """
     if df_actuals is None or 'valor_real' not in df_actuals.columns:
         return {"anomalies": [], "error": "No hay datos reales para analizar."}
 
@@ -306,29 +363,64 @@ def _get_anomaly_results(predictions_series, df_actuals, thresh=2.5):
     if common_index.empty:
         return {"anomalies": [], "error": "No hay solapamiento entre predicción y reales."}
 
+    # 1. Preparar DataFrame de análisis
     y_pred = predictions_series[common_index]
     y_true = df_actuals.loc[common_index, 'valor_real']
     
     valid_idx = y_true.notna() & y_pred.notna()
-    residuals = (y_true[valid_idx] - y_pred[valid_idx])
-    
-    if residuals.empty:
-        return {"anomalies": []}
+    if not valid_idx.any():
+        return {"anomalies": [], "error": "No hay datos válidos solapados."}
 
-    rs = residuals.values
-    mu, sd = float(np.mean(rs)), float(np.std(rs) + 1e-9)
+    y_true = y_true[valid_idx]
+    y_pred = y_pred[valid_idx]
+    
+    df_an = pd.DataFrame({"real": y_true, "referencia": y_pred})
+    df_an["residuo"] = df_an["real"] - df_an["referencia"]
+
+    # 2. Calcular umbrales híbridos y sigma robusto
+    try:
+        umbral, sigma_rob, step_min = _calculate_hybrid_thresholds(df_an, K=thresh)
+    except Exception as e:
+        print(f"ERROR en _calculate_hybrid_thresholds: {e}")
+        return {"anomalies": [], "error": f"Error al calcular umbrales: {e}"}
+
+    # 3. Aplicar submuestreo (como en train.py)
+    stride = max(1, ANOM_CHECK_EVERY_MIN // step_min) if ANOM_CHECK_EVERY_MIN > 0 else 1
+    check_idx = df_an.index[::stride]
     
     anomalies = []
-    for ts, residual in residuals.items():
-        z = (residual - mu) / sd
-        if abs(z) >= thresh:
+    
+    # 4. Iterar SOLO sobre los puntos de chequeo
+    for ts in check_idx:
+        # Puede que el índice de chequeo no esté en el df filtrado (poca data)
+        if ts not in df_an.index:
+            continue
+            
+        residuo = df_an.loc[ts, "residuo"]
+        umbral_mw = umbral.loc[ts]
+        
+        # Omitir si faltan datos para el cálculo
+        if pd.isna(residuo) or pd.isna(umbral_mw):
+            continue
+
+        # 5. Comprobar anomalía
+        if abs(residuo) > umbral_mw:
+            # Calcular Z-score robusto para el reporte
+            sigma = sigma_rob.loc[ts]
+            z_robust = (residuo / sigma) if pd.notna(sigma) and sigma > 0.1 else 0.0
+            
             anomalies.append({
                 "ts": ts.isoformat(), 
-                "residual": float(residual), 
-                "z": float(z), 
-                "severity": min(abs(z)/5.0, 1.0)
+                "residual": float(residuo), 
+                "z": float(z_robust), 
+                "severity": min(abs(z_robust) / 5.0, 1.0) # Usar z-robust para severidad
             })
-    return {"mu": mu, "sd": sd, "threshold": thresh, "anomalies": anomalies}
+    
+    # 6. Reportar medianas para el resumen (son más robustas)
+    mu_report = float(df_an["residuo"].median())
+    sd_report = float(sigma_rob.median()) 
+
+    return {"mu": mu_report, "sd": sd_report, "threshold": thresh, "anomalies": anomalies}
 
 
 # --- Función de "Warm-Up" ---
