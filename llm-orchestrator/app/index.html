@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <title>GreenEnergy Insights - Chatbot</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; margin: 2rem; max-width: 720px; background: #f5f5f5; margin-left: auto; margin-right: auto;}
+        h1 {color: #2c3e50; text-align: center;}
+        .msg {padding: .6rem .8rem; border-radius: .6rem; margin: .4rem 0; max-width: 80%; line-height: 1.4;}
+        .you {background: #007bff; color: white; margin-left: auto; text-align: right;}
+        .bot {background: white; border: 1px solid #ddd; text-align: left;}
+        .tools {background: #fff3cd; color: #856404; padding: .4rem; margin: .2rem 0; font-size: .85em; border-radius: .3rem; text-align: left; max-width: 80%;}
+        #log {border: 1px solid #ccc; padding: 1rem; height: 420px; overflow-y: auto; background: white; border-radius: .5rem;}
+        #input-area {margin-top: 1rem; display: flex; gap: .5rem;}
+        input {flex: 1; padding: .7rem; border: 1px solid #ccc; border-radius: .3rem;}
+        button {padding: .7rem 1.5rem; background: #007bff; color: white; border: none; border-radius: .3rem; cursor: pointer;}
+        button:hover {background: #0056b3;}
+    </style>
+</head>
+<body>
+    <h1>🌱 GreenEnergy Insights</h1>
+    <p style="text-align:center;color:#666">Chatbot de Análisis de Demanda Eléctrica</p>
+    <div id="log"></div>
+    <div id="input-area">
+        <input id="t" placeholder="Escribe tu consulta..." autofocus />
+        <button onclick="send()">Enviar</button>
+    </div>
+
+    <script>
+        const API = "/chat",
+            log = document.getElementById('log'),
+            t = document.getElementById('t');
+
+        // Mensaje de bienvenida inicial (llama al backend con 'hola')
+        window.onload = () => {
+            fetch(API, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: 'hola' })
+            }).then(r => r.json()).then(j => {
+                add('bot', j.answer || 'Error al obtener bienvenida.');
+            });
+        };
+
+        function add(w, txt) {
+            const d = document.createElement('div');
+            // Reemplaza el formato markdown de negritas por HTML si el texto viene del bot
+            if (w === 'bot') {
+                 txt = txt.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            }
+            d.className = 'msg ' + w;
+            d.innerHTML = txt.replace(/\n/g, '<br>'); // Respeta saltos de línea
+            log.appendChild(d);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        async function send() {
+            const msg = t.value.trim();
+            if (!msg) return;
+
+            add('you', msg);
+            t.value = '';
+
+            try {
+                const r = await fetch(API, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: msg })
+                });
+
+                const j = await r.json();
+
+                // Añade la respuesta del bot
+                add('bot', j.answer || (j.detail ? ('Error: ' + j.detail) : 'Error desconocido'));
+
+                // Muestra las herramientas usadas
+                if (j.used_tools && j.used_tools.length) {
+                    const toolDiv = document.createElement('div');
+                    toolDiv.className = 'tools';
+                    toolDiv.textContent = '🔧 Herramientas: ' + j.used_tools.join(', ');
+                    log.appendChild(toolDiv);
+                    log.scrollTop = log.scrollHeight;
+                }
+            } catch (e) {
+                add('bot', 'Error al conectar con el servidor.');
+            }
+        }
+
+        // Enviar al presionar Enter
+        t.addEventListener('keydown', e => {
+            if (e.key === 'Enter') send();
+        });
+    </script>
+</body>
+</html>
